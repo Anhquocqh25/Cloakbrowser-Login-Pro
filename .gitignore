@@ -34,6 +34,7 @@ backups/
 # Release artifacts
 release/*
 !release/*.zip
+!release/*.exe
 !release/README.md
 
 # OS/editor

@@ -6,17 +6,28 @@
 
 Phiên bản đầu tiên: **0.1.0**
 
-Tải bản Windows tại đây:
+Bạn có thể chọn một trong hai bản:
 
-[Download CloakBrowser Login Pro 0.1.0 for Windows](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/raw/main/release/CloakBrowser-Login-0.1.0-Windows.zip)
+### Bản cài đặt trực tiếp
 
-Cách dùng:
+[Download Installer EXE 0.1.0](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/raw/main/release/CloakBrowser-Login-Pro-Setup-0.1.0-Windows.exe)
 
-1. Tải file ZIP ở link trên.
+1. Tải file EXE ở link trên.
+2. Mở file `CloakBrowser-Login-Pro-Setup-0.1.0-Windows.exe`.
+3. Bấm Next/Install để cài app.
+4. Sau khi cài, mở app từ Start Menu hoặc shortcut Desktop nếu đã chọn.
+
+Installer cài theo user hiện tại, không cần quyền Administrator.
+
+### Bản portable
+
+[Download Portable ZIP 0.1.0](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/raw/main/release/CloakBrowser-Login-0.1.0-Windows.zip)
+
+1. Tải file ZIP.
 2. Giải nén ra một thư mục bất kỳ.
 3. Mở `CloakBrowser Login.exe`.
 
-Lưu ý: đây là bản portable đóng gói sẵn, chưa phải installer `.msi`. Sau này nếu cần có thể thêm bộ cài đặt Windows riêng.
+Bản portable phù hợp nếu bạn muốn chạy trực tiếp, không cần cài vào Windows.
 
 ## Chức năng chính
 

@@ -46,7 +46,7 @@ Bản portable phù hợp nếu bạn muốn chạy trực tiếp, không cần 
 - Fingerprint Lab: CloakBrowser version, Consistency Engine, snapshot/diff, Seed Lock, Duplicate Detector, Regression Test.
 - Thùng rác profile, khôi phục hoặc xóa vĩnh viễn sau thời gian giữ.
 - Hỗ trợ giao diện tiếng Việt/tiếng Anh.
-- DuckDuckGo là công cụ tìm kiếm mặc định của các profile mới và hiện có.
+- DuckDuckGo là công cụ tìm kiếm mặc định, được áp dụng bằng extension đơn nhiệm thay vì sửa trực tiếp dữ liệu bảo vệ của Chromium.
 - Kiểm tra, tải và xác minh cập nhật ngay trong trang Cài đặt.
 - Bản installer tự chạy bộ cài mới; bản portable tự thay thế tệp ứng dụng sau khi đóng app.
 

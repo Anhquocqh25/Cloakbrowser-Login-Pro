@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from models.profile import Profile
-from utils.browser_preferences import configure_duckduckgo
 from utils.local_proxy_bridge import LocalProxyBridge
 from utils.paths import profile_user_data_dir
 from utils.startup_url import normalize_startup_url
@@ -73,6 +72,10 @@ def builtin_extension_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "extensions" / "fingerprint_bookmarks"
 
 
+def duckduckgo_extension_dir() -> Path:
+    return Path(__file__).resolve().parent.parent / "extensions" / "duckduckgo_search"
+
+
 def find_google_chrome() -> Path | None:
     if os.name != "nt":
         return None
@@ -121,6 +124,7 @@ def ensure_windows_dxil() -> None:
 
 def _extension_paths(extension_paths: list[str] | None) -> list[str]:
     selected = [str(builtin_extension_dir())] if extension_paths is None else extension_paths
+    selected = [*selected, str(duckduckgo_extension_dir())]
     return list(dict.fromkeys(str(Path(item).resolve()) for item in selected))
 
 
@@ -169,7 +173,6 @@ def launch_cloak_clean(profile: Profile, extension_paths: list[str] | None = Non
     binary_path = Path(ensure_binary(profile.cloak_version or None)).resolve()
     data_dir = profile_user_data_dir(profile.id)
     data_dir.mkdir(parents=True, exist_ok=True)
-    configure_duckduckgo(data_dir)
 
     fingerprint_platform = (
         profile.platform if profile.platform in {"windows", "macos", "linux"} else "windows"
@@ -206,7 +209,6 @@ def launch_cloak_clean(profile: Profile, extension_paths: list[str] | None = Non
         "--show-bookmarks-bar",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-search-engine-choice-screen",
         "--disable-session-crashed-bubble",
         "--disable-background-mode",
     ]
@@ -251,14 +253,12 @@ def launch_native_chrome(profile: Profile, extension_paths: list[str] | None = N
 
     loaded_extensions = _extension_paths(extension_paths)
     data_dir = profile_user_data_dir(profile.id) / "chrome-native"
-    configure_duckduckgo(data_dir)
     args = [
         f"--user-data-dir={data_dir}",
         f"--window-size={profile.screen_width},{profile.screen_height}",
         "--show-bookmarks-bar",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-search-engine-choice-screen",
         "--disable-session-crashed-bubble",
         "--disable-background-mode",
     ]

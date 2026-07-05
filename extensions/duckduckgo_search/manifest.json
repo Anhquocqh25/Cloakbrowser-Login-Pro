@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "DuckDuckGo Default Search",
+  "version": "1.0.0",
+  "description": "Sets DuckDuckGo as the default search engine for this browser profile.",
+  "chrome_settings_overrides": {
+    "search_provider": {
+      "name": "DuckDuckGo",
+      "keyword": "duckduckgo.com",
+      "search_url": "https://duckduckgo.com/?q={searchTerms}",
+      "favicon_url": "https://duckduckgo.com/favicon.ico",
+      "suggest_url": "https://duckduckgo.com/ac/?q={searchTerms}&type=list",
+      "encoding": "UTF-8",
+      "is_default": true
+    }
+  }
+}

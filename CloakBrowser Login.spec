@@ -11,6 +11,7 @@ datas = [
     (str(project_dir / "assets" / "app_logo.png"), "assets"),
     (str(project_dir / "assets" / "flags"), "assets/flags"),
     (str(project_dir / "extensions" / "fingerprint_bookmarks"), "extensions/fingerprint_bookmarks"),
+    (str(project_dir / "extensions" / "duckduckgo_search"), "extensions/duckduckgo_search"),
     *cloak_datas,
 ]
 

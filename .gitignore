@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build output
+build/
+dist/
+*.spec.bak
+*.log
+
+# Local app/runtime data
+*.db
+*.sqlite
+*.sqlite3
+profiles/
+backups/
+.smoke-data/
+.flag-test/
+.flag-migration/
+
+# Local secrets/config
+.env
+.env.*
+
+# Release artifacts
+release/*
+!release/*.zip
+!release/README.md
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

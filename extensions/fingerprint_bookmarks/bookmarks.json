@@ -1,0 +1,32 @@
+{
+  "folders": [
+    "Fingerprint Tests"
+  ],
+  "items": [
+    {
+      "title": "BrowserLeaks",
+      "url": "https://browserleaks.com/",
+      "folder": "Fingerprint Tests"
+    },
+    {
+      "title": "BrowserScan",
+      "url": "https://browserscan.org/",
+      "folder": "Fingerprint Tests"
+    },
+    {
+      "title": "CreepJS",
+      "url": "https://abrahamjuliot.github.io/creepjs/",
+      "folder": "Fingerprint Tests"
+    },
+    {
+      "title": "FingerprintJS Demo",
+      "url": "https://fingerprint.com/demo/",
+      "folder": "Fingerprint Tests"
+    },
+    {
+      "title": "IPhey",
+      "url": "https://iphey.com/",
+      "folder": "Fingerprint Tests"
+    }
+  ]
+}

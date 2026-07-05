@@ -170,7 +170,17 @@ QMenu::separator { height: 1px; background-color: #e5e7eb; margin: 5px 8px; }
 QLabel#pageTitle { color: #111827; font-size: 24px; font-weight: 700; }
 QLabel#pageSubtitle { color: #6b7280; font-size: 13px; }
 QFrame#settingsCard { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 9px; }
+QLabel#settingTitle { color: #111827; font-size: 16px; font-weight: 650; }
 QLabel#settingLabel { color: #9ca3af; font-size: 11px; padding-top: 8px; }
+QProgressBar {
+    min-height: 8px;
+    max-height: 8px;
+    background-color: #edf0f3;
+    border: none;
+    border-radius: 4px;
+    color: transparent;
+}
+QProgressBar::chunk { background-color: #20b89a; border-radius: 4px; }
 
 QDialog#columnSettingsDialog { background-color: #ffffff; border-radius: 9px; }
 QDialog#batchCreateDialog { background-color: #ffffff; }

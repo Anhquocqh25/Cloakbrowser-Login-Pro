@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from models.profile import Profile
+from utils.browser_preferences import configure_duckduckgo
 from utils.local_proxy_bridge import LocalProxyBridge
 from utils.paths import profile_user_data_dir
 from utils.startup_url import normalize_startup_url
@@ -168,6 +169,7 @@ def launch_cloak_clean(profile: Profile, extension_paths: list[str] | None = Non
     binary_path = Path(ensure_binary(profile.cloak_version or None)).resolve()
     data_dir = profile_user_data_dir(profile.id)
     data_dir.mkdir(parents=True, exist_ok=True)
+    configure_duckduckgo(data_dir)
 
     fingerprint_platform = (
         profile.platform if profile.platform in {"windows", "macos", "linux"} else "windows"
@@ -204,6 +206,7 @@ def launch_cloak_clean(profile: Profile, extension_paths: list[str] | None = Non
         "--show-bookmarks-bar",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-search-engine-choice-screen",
         "--disable-session-crashed-bubble",
         "--disable-background-mode",
     ]
@@ -247,12 +250,15 @@ def launch_native_chrome(profile: Profile, extension_paths: list[str] | None = N
         raise BrowserLaunchError("Google Chrome is not installed or could not be found.")
 
     loaded_extensions = _extension_paths(extension_paths)
+    data_dir = profile_user_data_dir(profile.id) / "chrome-native"
+    configure_duckduckgo(data_dir)
     args = [
-        f"--user-data-dir={profile_user_data_dir(profile.id) / 'chrome-native'}",
+        f"--user-data-dir={data_dir}",
         f"--window-size={profile.screen_width},{profile.screen_height}",
         "--show-bookmarks-bar",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-search-engine-choice-screen",
         "--disable-session-crashed-bubble",
         "--disable-background-mode",
     ]

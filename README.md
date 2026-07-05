@@ -46,6 +46,9 @@ Bản portable phù hợp nếu bạn muốn chạy trực tiếp, không cần 
 - Fingerprint Lab: CloakBrowser version, Consistency Engine, snapshot/diff, Seed Lock, Duplicate Detector, Regression Test.
 - Thùng rác profile, khôi phục hoặc xóa vĩnh viễn sau thời gian giữ.
 - Hỗ trợ giao diện tiếng Việt/tiếng Anh.
+- DuckDuckGo là công cụ tìm kiếm mặc định của các profile mới và hiện có.
+- Kiểm tra, tải và xác minh cập nhật ngay trong trang Cài đặt.
+- Bản installer tự chạy bộ cài mới; bản portable tự thay thế tệp ứng dụng sau khi đóng app.
 
 ## Chạy từ source code
 
@@ -88,6 +91,10 @@ App lưu dữ liệu profile, cấu hình, proxy, extension và bookmark tại:
 ```
 
 Không nên commit dữ liệu trong thư mục này lên GitHub.
+
+## Phát hành bản cập nhật
+
+Mỗi bản mới cần build lại cả installer và portable, tính SHA-256 của hai tệp rồi cập nhật `release/latest.json`. App đọc tệp này từ GitHub, so sánh version và chỉ cài gói có mã SHA-256 khớp. Dữ liệu profile vẫn nằm trong `%LOCALAPPDATA%\CloakBrowser Login` nên không bị ghi đè khi nâng cấp.
 
 ## Phiên bản
 

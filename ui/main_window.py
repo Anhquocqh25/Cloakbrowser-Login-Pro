@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout,
     QComboBox, QFileDialog, QHeaderView, QLabel, QLineEdit,
     QMainWindow, QMenu, QMessageBox, QPushButton,
-    QStackedWidget, QTableWidget, QTableWidgetItem,
+    QProgressBar, QStackedWidget, QTableWidget, QTableWidgetItem,
     QToolButton, QVBoxLayout, QWidget,
 )
 
@@ -23,6 +23,10 @@ from models.bookmark import BookmarkRecord
 from models.extension import ExtensionRecord
 from models.profile import Profile
 from models.proxy import ProxyRecord
+from services.update_service import (
+    AppUpdateInfo, UpdateCheckThread, UpdateDownloadThread,
+    installation_mode, is_newer_version, launch_downloaded_update, update_asset,
+)
 from storage.config_store import ConfigStore
 from ui.add_extension_dialog import AddExtensionDialog
 from ui.batch_create_dialog import BatchCreateDialog
@@ -51,6 +55,11 @@ class MainWindow(QMainWindow):
         self.deleted_profiles: list[Profile] = []
         self._trash_checked_ids: set[str] = set()
         self._last_trashed_ids: list[str] = []
+        self._available_app_update: AppUpdateInfo | None = None
+        self._downloaded_app_update: Path | None = None
+        self._update_check_thread: UpdateCheckThread | None = None
+        self._update_download_thread: UpdateDownloadThread | None = None
+        self._installation_mode = installation_mode()
 
         self.width_save_timer = QTimer(self)
         self.width_save_timer.setSingleShot(True)
@@ -393,8 +402,158 @@ class MainWindow(QMainWindow):
         language_row.addWidget(self.language_input, 1)
         language_row.addWidget(apply_language)
         card_layout.addLayout(language_row)
-        layout.addWidget(card); layout.addStretch(1)
+
+        search_label = QLabel("Default search engine")
+        search_label.setObjectName("settingLabel")
+        card_layout.addWidget(search_label)
+        search_value = QLabel("DuckDuckGo · applied safely to every browser profile")
+        search_value.setWordWrap(True)
+        card_layout.addWidget(search_value)
+        layout.addWidget(card)
+
+        update_card = QFrame(); update_card.setObjectName("settingsCard")
+        update_layout = QVBoxLayout(update_card); update_layout.setContentsMargins(20, 18, 20, 18)
+        update_title = QLabel("App updates"); update_title.setObjectName("settingTitle")
+        update_layout.addWidget(update_title)
+        mode_text = {
+            "installed": "Installed edition · updates use the Windows installer",
+            "portable": "Portable edition · updates replace only application files",
+            "development": "Development mode · update checks are available for testing",
+        }[self._installation_mode]
+        self.app_update_mode_label = QLabel(mode_text)
+        self.app_update_mode_label.setObjectName("pageSubtitle")
+        self.app_update_mode_label.setWordWrap(True)
+        update_layout.addWidget(self.app_update_mode_label)
+        self.app_update_status = QLabel(tr(f"Current version: {APP_VERSION}"))
+        self.app_update_status.setWordWrap(True)
+        update_layout.addWidget(self.app_update_status)
+        self.app_update_progress = QProgressBar()
+        self.app_update_progress.setRange(0, 100)
+        self.app_update_progress.setTextVisible(True)
+        self.app_update_progress.hide()
+        update_layout.addWidget(self.app_update_progress)
+        update_buttons = QHBoxLayout()
+        self.check_app_update_button = QPushButton("Check for updates")
+        self.check_app_update_button.clicked.connect(self.check_app_update)
+        self.install_app_update_button = QPushButton("Download update")
+        self.install_app_update_button.setObjectName("primaryButton")
+        self.install_app_update_button.clicked.connect(self.download_or_install_app_update)
+        self.install_app_update_button.hide()
+        update_buttons.addWidget(self.check_app_update_button)
+        update_buttons.addWidget(self.install_app_update_button)
+        update_buttons.addStretch(1)
+        update_layout.addLayout(update_buttons)
+        layout.addWidget(update_card)
+        layout.addStretch(1)
         return page
+
+    def check_app_update(self) -> None:
+        if self._update_check_thread is not None:
+            self.show_status("An update check is already running")
+            return
+        self.check_app_update_button.setEnabled(False)
+        self.install_app_update_button.hide()
+        self.app_update_status.setText(tr("Checking GitHub for a newer version…"))
+        thread = UpdateCheckThread(self)
+        thread.completed.connect(self._app_update_checked)
+        thread.failed.connect(self._app_update_failed)
+        thread.finished.connect(self._update_check_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._update_check_thread = thread
+        thread.start()
+
+    def _app_update_checked(self, info: AppUpdateInfo) -> None:
+        self._available_app_update = info
+        self._downloaded_app_update = None
+        if not is_newer_version(info.version, APP_VERSION):
+            self.app_update_status.setText(tr(
+                f"You are up to date · version {APP_VERSION} is the latest version"
+            ))
+            self.install_app_update_button.hide()
+            return
+        notes = f"\n{info.notes}" if info.notes else ""
+        self.app_update_status.setText(tr(
+            f"Version {info.version} is available.{notes}"
+        ))
+        self.install_app_update_button.setText(tr("Download update"))
+        self.install_app_update_button.show()
+
+    def _app_update_failed(self, message: str) -> None:
+        self.app_update_status.setText(tr(f"Update check failed · {message}"))
+        self.show_error(message)
+
+    def _update_check_finished(self) -> None:
+        self._update_check_thread = None
+        self.check_app_update_button.setEnabled(True)
+
+    def download_or_install_app_update(self) -> None:
+        info = self._available_app_update
+        if info is None:
+            self.check_app_update()
+            return
+        if self._downloaded_app_update and self._downloaded_app_update.is_file():
+            self._install_downloaded_app_update()
+            return
+        if self.controller.has_background_work():
+            self.show_error("Stop all running profiles and background checks before updating the app.")
+            return
+        if QMessageBox.question(
+            self,
+            tr("Install update"),
+            tr(f"Download version {info.version} from GitHub now?"),
+            QMessageBox.Yes | QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        url, sha256 = update_asset(info, self._installation_mode)
+        self.install_app_update_button.setEnabled(False)
+        self.check_app_update_button.setEnabled(False)
+        self.app_update_progress.setValue(0)
+        self.app_update_progress.show()
+        self.app_update_status.setText(tr(f"Downloading version {info.version}…"))
+        thread = UpdateDownloadThread(url, sha256, self)
+        thread.progress.connect(self.app_update_progress.setValue)
+        thread.completed.connect(self._app_update_downloaded)
+        thread.failed.connect(self._app_update_download_failed)
+        thread.finished.connect(self._update_download_finished)
+        thread.finished.connect(thread.deleteLater)
+        self._update_download_thread = thread
+        thread.start()
+
+    def _app_update_downloaded(self, path: str) -> None:
+        self._downloaded_app_update = Path(path)
+        self.app_update_status.setText(tr(
+            "Update downloaded and verified. Click Install update to finish."
+        ))
+        self.install_app_update_button.setText(tr("Install update"))
+
+    def _app_update_download_failed(self, message: str) -> None:
+        self.app_update_status.setText(tr(f"Update download failed · {message}"))
+        self.show_error(message)
+
+    def _update_download_finished(self) -> None:
+        self._update_download_thread = None
+        self.check_app_update_button.setEnabled(True)
+        self.install_app_update_button.setEnabled(True)
+        self.app_update_progress.hide()
+
+    def _install_downloaded_app_update(self) -> None:
+        if self._downloaded_app_update is None or not self._downloaded_app_update.is_file():
+            self.show_error("The downloaded update file is no longer available.")
+            return
+        if self.controller.has_background_work():
+            self.show_error("Stop all running profiles and background checks before installing the update.")
+            return
+        try:
+            launch_downloaded_update(
+                self._downloaded_app_update,
+                self._installation_mode,
+                Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else None,
+            )
+        except Exception as error:
+            self.show_error(str(error))
+            return
+        self._allow_close = True
+        QApplication.quit()
 
     def _apply_interface_language(self) -> None:
         selected = str(self.language_input.currentData() or "en")
@@ -1505,6 +1664,12 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self._flush_column_widths()
+        if self._update_check_thread is not None or self._update_download_thread is not None:
+            QMessageBox.information(
+                self, tr("App updates"),
+                tr("Please wait for the current update operation to finish."),
+            )
+            event.ignore(); return
         if self._allow_close or not self.controller.has_background_work():
             event.accept(); return
         if QMessageBox.question(

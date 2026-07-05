@@ -35,6 +35,7 @@ backups/
 release/*
 !release/*.zip
 !release/*.exe
+!release/latest.json
 !release/README.md
 
 # OS/editor

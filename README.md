@@ -111,6 +111,7 @@ Mỗi bản mới cần build lại cả installer và portable, tính SHA-256 c
 
 ## Phiên bản
 
+- `0.1.2`: sidebar icon mới, dropdown hiện đại, Runtime Watcher chắc hơn, User-Agent selector, Fingerprint Snapshot theo profile, proxy auto-match, Safe Clone và multi-tab startup URL.
 - `0.1.1`: nâng cấp trải nghiệm người dùng, Compatibility Guard, Smart Proxy Pool và hệ thống phát hành/cập nhật chuẩn.
 - `0.1.0`: bản public đầu tiên.
 

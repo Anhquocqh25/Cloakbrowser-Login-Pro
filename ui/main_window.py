@@ -7,7 +7,7 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QProcess, QSignalBlocker, QTimer, Qt
+from PySide6.QtCore import QProcess, QSignalBlocker, QSize, QTimer, Qt
 from PySide6.QtGui import QColor, QFont, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout,
@@ -32,6 +32,8 @@ from storage.config_store import ConfigStore
 from ui.add_extension_dialog import AddExtensionDialog
 from ui.batch_create_dialog import BatchCreateDialog
 from ui.column_settings_dialog import ColumnSettingsDialog
+from ui.icon_factory import sidebar_icon
+from ui.modern_controls import ModernComboBox
 from ui.profile_table import PROFILE_COLUMNS, ProfileTable
 from ui.profile_editor_page import ProfileEditorPage
 from ui.task_center import TaskCenterPage
@@ -182,17 +184,17 @@ class MainWindow(QMainWindow):
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
         required_nav = [
-            ("Dashboard", PAGE_DASHBOARD, "⌂"),
-            ("All profiles", PAGE_PROFILES, "●"), ("Profiles", PAGE_PROFILES, "◎"),
-            ("Proxies", PAGE_PROXIES, "◉"),
-            ("Startup website", PAGE_STARTUP, "↗"),
-            ("Trash", PAGE_TRASH, "⌫"),
-            ("Backup & Restore", PAGE_BACKUP, "↻"),
-            ("Profile Health", PAGE_HEALTH, "✓"),
-            ("Activity Log", PAGE_ACTIVITY, "≡"),
-            ("Fingerprint Lab", PAGE_FINGERPRINT, "◇"),
-            ("Task center", PAGE_TASKS, "↯"),
-            ("Settings", PAGE_SETTINGS, "⚙"),
+            ("Dashboard", PAGE_DASHBOARD, "dashboard"),
+            ("All profiles", PAGE_PROFILES, "profiles"), ("Profiles", PAGE_PROFILES, "profile"),
+            ("Proxies", PAGE_PROXIES, "proxy"),
+            ("Startup website", PAGE_STARTUP, "startup"),
+            ("Trash", PAGE_TRASH, "trash"),
+            ("Backup & Restore", PAGE_BACKUP, "backup"),
+            ("Profile Health", PAGE_HEALTH, "health"),
+            ("Activity Log", PAGE_ACTIVITY, "activity"),
+            ("Fingerprint Lab", PAGE_FINGERPRINT, "fingerprint"),
+            ("Task center", PAGE_TASKS, "tasks"),
+            ("Settings", PAGE_SETTINGS, "settings"),
         ]
         for row, (label, page_index, icon) in enumerate(required_nav):
             button = self._nav_button(label, page_index, icon)
@@ -204,8 +206,8 @@ class MainWindow(QMainWindow):
         tools_label.setObjectName("sidebarSection")
         layout.addSpacing(16)
         layout.addWidget(tools_label)
-        layout.addWidget(self._nav_button("Extensions", PAGE_EXTENSIONS, "◆"))
-        layout.addWidget(self._nav_button("Bookmarks", PAGE_BOOKMARKS, "★"))
+        layout.addWidget(self._nav_button("Extensions", PAGE_EXTENSIONS, "extensions"))
+        layout.addWidget(self._nav_button("Bookmarks", PAGE_BOOKMARKS, "bookmarks"))
         layout.addStretch(1)
         footer = QLabel(f"Version {APP_VERSION}")
         footer.setObjectName("sidebarFooter")
@@ -217,6 +219,8 @@ class MainWindow(QMainWindow):
         button.setObjectName("navButton")
         button.setCheckable(True)
         button.setMinimumHeight(40)
+        button.setIcon(sidebar_icon(icon))
+        button.setIconSize(QSize(19, 19))
         button.clicked.connect(partial(self.pages.setCurrentIndex, page_index))
         button.setProperty("fullLabel", label)
         button.setProperty("navIcon", icon)
@@ -319,7 +323,7 @@ class MainWindow(QMainWindow):
         more_button.setMenu(overflow)
         self.profile_count = QLabel("0 profiles")
         self.profile_count.setObjectName("profileCount")
-        self.sort_input = QComboBox()
+        self.sort_input = ModernComboBox()
         self.sort_input.setObjectName("profileSort")
         self.sort_input.setToolTip("Sort profiles")
         self.sort_input.addItem("Newest first", "created_desc")
@@ -358,16 +362,16 @@ class MainWindow(QMainWindow):
         filter_layout = QHBoxLayout(filters)
         filter_layout.setContentsMargins(12, 7, 12, 7)
         filter_layout.setSpacing(8)
-        self.group_filter = QComboBox(); self.group_filter.addItem("All groups", "")
+        self.group_filter = ModernComboBox(); self.group_filter.addItem("All groups", "")
         self.group_filter.setMinimumWidth(145)
-        self.status_filter = QComboBox()
+        self.status_filter = ModernComboBox()
         for label, value in (("All states", ""), ("Ready", "stopped"), ("Running", "running"), ("Needs attention", "attention")):
             self.status_filter.addItem(label, value)
-        self.os_filter = QComboBox()
+        self.os_filter = ModernComboBox()
         for label, value in (("All systems", ""), ("Windows 11", "windows"), ("macOS", "macos"), ("Linux", "linux")):
             self.os_filter.addItem(label, value)
         self.pinned_filter = QCheckBox("Pinned only")
-        self.saved_view_input = QComboBox(); self.saved_view_input.setMinimumWidth(150)
+        self.saved_view_input = ModernComboBox(); self.saved_view_input.setMinimumWidth(150)
         self.saved_view_input.currentIndexChanged.connect(self._apply_saved_view)
         save_view = QPushButton("Save view"); save_view.clicked.connect(self.save_current_view)
         delete_view = QPushButton("×"); delete_view.setToolTip("Delete selected view"); delete_view.setFixedWidth(34); delete_view.clicked.connect(self.delete_current_view)
@@ -481,7 +485,7 @@ class MainWindow(QMainWindow):
         self.proxy_pool_enabled = QCheckBox("Smart Pool")
         self.proxy_pool_enabled.setChecked(self.config_store.proxy_pool_enabled())
         self.proxy_pool_enabled.toggled.connect(self._save_proxy_pool_settings)
-        self.proxy_pool_interval = QComboBox()
+        self.proxy_pool_interval = ModernComboBox()
         for label, minutes in (("5 min", 5), ("15 min", 15), ("30 min", 30), ("1 hour", 60), ("3 hours", 180)):
             self.proxy_pool_interval.addItem(label, minutes)
         self.proxy_pool_interval.setCurrentIndex(max(0, self.proxy_pool_interval.findData(self.config_store.proxy_pool_interval_minutes())))
@@ -519,7 +523,7 @@ class MainWindow(QMainWindow):
         language_label.setObjectName("settingLabel")
         card_layout.addWidget(language_label)
         language_row = QHBoxLayout()
-        self.language_input = QComboBox()
+        self.language_input = ModernComboBox()
         self.language_input.addItem("English", "en")
         self.language_input.addItem("Tiếng Việt", "vi")
         self.language_input.setCurrentIndex(
@@ -737,12 +741,13 @@ class MainWindow(QMainWindow):
         title.setObjectName("editorSectionTitle")
         description = QLabel(
             "This address applies to every profile whose Startup website override is empty. "
-            "To use a different page for one profile, open Settings → Overview."
+            "To use a different page for one profile, open Settings → Overview. "
+            "Use commas to open multiple tabs."
         )
         description.setObjectName("pageSubtitle")
         description.setWordWrap(True)
         self.default_startup_input = QLineEdit(self.config_store.default_startup_url())
-        self.default_startup_input.setPlaceholderText("https://example.com · leave empty for a blank tab")
+        self.default_startup_input.setPlaceholderText("duckduckgo.com, iphey.com · leave empty for a blank tab")
         self.default_startup_input.setMinimumHeight(40)
 
         buttons = QHBoxLayout()
@@ -830,7 +835,7 @@ class MainWindow(QMainWindow):
         self.trash_restore_selected = QPushButton("Restore selected")
         self.trash_delete_selected = QPushButton("Delete selected permanently")
         self.trash_restore_selected.setEnabled(False); self.trash_delete_selected.setEnabled(False)
-        retention = QComboBox()
+        retention = ModernComboBox()
         for days in (7, 15, 30): retention.addItem(f"Keep {days} days", days)
         retention.setCurrentIndex(max(0, retention.findData(self.config_store.trash_retention_days())))
         retention.currentIndexChanged.connect(lambda: self._set_trash_retention(int(retention.currentData())))
@@ -873,7 +878,7 @@ class MainWindow(QMainWindow):
         auto_row = QHBoxLayout()
         self.auto_backup_checkbox = QCheckBox("Automatic backup")
         self.auto_backup_checkbox.setChecked(self.config_store.automatic_backup_enabled())
-        self.auto_backup_interval = QComboBox()
+        self.auto_backup_interval = ModernComboBox()
         for label, value in (("Every day", 1), ("Every 3 days", 3), ("Every 7 days", 7)):
             self.auto_backup_interval.addItem(label, value)
         self.auto_backup_interval.setCurrentIndex(max(0, self.auto_backup_interval.findData(self.config_store.backup_interval_days())))
@@ -906,7 +911,7 @@ class MainWindow(QMainWindow):
         controls = QFrame(); controls.setObjectName("bulkActionBar")
         row = QHBoxLayout(controls); row.setContentsMargins(12, 7, 12, 7)
         self.activity_search = QLineEdit(); self.activity_search.setPlaceholderText("Search activity"); self.activity_search.setClearButtonEnabled(True)
-        self.activity_severity = QComboBox()
+        self.activity_severity = ModernComboBox()
         for label, value in (("All levels", ""), ("Information", "info"), ("Warnings", "warning"), ("Errors", "error")):
             self.activity_severity.addItem(label, value)
         export = QPushButton("Export report"); export.clicked.connect(self.export_activity_report)
@@ -940,7 +945,7 @@ class MainWindow(QMainWindow):
         self.cloak_version_detail.setObjectName("pageSubtitle")
         self.cloak_version_detail.setTextInteractionFlags(Qt.TextSelectableByMouse)
         version_text.addWidget(self.cloak_version_title); version_text.addWidget(self.cloak_version_detail)
-        self.cloak_version_combo = QComboBox(); self.cloak_version_combo.setMinimumWidth(245)
+        self.cloak_version_combo = ModernComboBox(); self.cloak_version_combo.setMinimumWidth(245)
         select_version = QPushButton("Use selected version"); select_version.clicked.connect(self.select_cloak_version)
         update_version = QPushButton("Check & download update"); update_version.setObjectName("primaryButton"); update_version.clicked.connect(self.check_cloak_update)
         version_layout.addLayout(version_text, 1); version_layout.addWidget(self.cloak_version_combo); version_layout.addWidget(select_version); version_layout.addWidget(update_version)
@@ -989,6 +994,7 @@ class MainWindow(QMainWindow):
         self.profile_table.health_requested.connect(self.controller.check_profile_health)
         self.profile_table.export_requested.connect(self.export_profile_by_id)
         self.profile_table.compatibility_requested.connect(self.show_compatibility_report)
+        self.profile_table.snapshot_requested.connect(self.show_fingerprint_snapshot_report)
         self.controller.profiles_changed.connect(self.populate_profiles)
         self.controller.proxies_changed.connect(self.populate_proxies)
         self.controller.extensions_changed.connect(self.populate_extensions)
@@ -1476,6 +1482,51 @@ class MainWindow(QMainWindow):
         else:
             lines.append("\nAll compatibility checks passed.")
         QMessageBox.information(self, tr("Fingerprint Compatibility Guard"), "\n".join(lines))
+
+    def show_fingerprint_snapshot_report(self, profile_id: str) -> None:
+        try:
+            report = self.controller.profile_snapshot_report(profile_id)
+        except Exception as error:
+            self.show_error(str(error)); return
+        profile = report["profile"]
+        snapshot = dict(report["snapshot"])
+        consistency = report["consistency"]
+        compatibility = report["compatibility"]
+        proxy = report.get("proxy")
+        lines = [
+            f"{profile.name} · fingerprint snapshot",
+            f"Hash: {str(report['fingerprint_hash'])[:16]}...",
+            "",
+            f"Compatibility: {compatibility.status} · {compatibility.score}/100",
+            f"Consistency: {consistency.status} · {consistency.score}/100",
+            "",
+            f"Engine: {snapshot.get('engine')}",
+            f"Cloak core: {snapshot.get('cloak_version') or 'auto'}",
+            f"Seed: {snapshot.get('fingerprint_seed')} · locked: {snapshot.get('seed_locked')}",
+            f"Platform: {snapshot.get('platform')}",
+            f"Screen: {snapshot.get('screen')}",
+            f"Locale: {snapshot.get('locale')}",
+            f"Timezone: {snapshot.get('timezone')}",
+            f"User-Agent: {snapshot.get('user_agent')}",
+            f"Proxy mode: {snapshot.get('proxy_mode')}",
+            f"WebRTC policy: {snapshot.get('webrtc_policy')}",
+            f"DNS route: {snapshot.get('dns_route')}",
+        ]
+        if proxy:
+            lines.extend([
+                "",
+                f"Proxy: {proxy.name} · {proxy.status}",
+                f"Exit IP: {proxy.exit_ip or 'not checked'}",
+                f"Location: {proxy.location or 'unknown'}",
+                f"Timezone: {proxy.timezone or 'unknown'}",
+                f"Quality: {proxy.quality_score}/100",
+            ])
+        if compatibility.issues:
+            lines.append("")
+            lines.append("Issues:")
+            for item in compatibility.issues[:8]:
+                lines.append(f"- {item.severity.upper()} · {item.title}: {item.detail}")
+        QMessageBox.information(self, tr("Fingerprint Snapshot"), "\n".join(lines))
 
     def clone_profile_by_id(self, profile_id: str) -> None:
         try: self.controller.clone_profile(profile_id)
@@ -2097,9 +2148,12 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle.setText("›" if collapsed else "‹")
         self.sidebar_toggle.setToolTip("Expand sidebar" if collapsed else "Collapse sidebar")
         for button in self._nav_buttons:
-            label = str(button.property("fullLabel")); icon = str(button.property("navIcon"))
-            button.setText(icon if collapsed else label); button.setToolTip(label if collapsed else "")
-            button.setStyleSheet("text-align: center;" if collapsed else "")
+            label = str(button.property("fullLabel"))
+            button.setText("" if collapsed else label)
+            button.setToolTip(label if collapsed else "")
+            button.setProperty("collapsed", collapsed)
+            button.style().unpolish(button)
+            button.style().polish(button)
         if persist: self.config_store.set_sidebar_collapsed(collapsed)
 
     def resizeEvent(self, event) -> None:

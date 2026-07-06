@@ -107,6 +107,7 @@ class ProfileTable(QTableWidget):
     health_requested = Signal(str)
     export_requested = Signal(str)
     compatibility_requested = Signal(str)
+    snapshot_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(0, len(PROFILE_COLUMNS), parent)
@@ -381,8 +382,9 @@ class ProfileTable(QTableWidget):
         menu.addAction("Edit profile", partial(self.edit_requested.emit, profile.id))
         menu.addAction("Check profile", partial(self.health_requested.emit, profile.id))
         menu.addAction("Compatibility report", partial(self.compatibility_requested.emit, profile.id))
+        menu.addAction("Fingerprint snapshot", partial(self.snapshot_requested.emit, profile.id))
         menu.addAction("Export profile", partial(self.export_requested.emit, profile.id))
-        menu.addAction("Clone", partial(self.clone_requested.emit, profile.id))
+        menu.addAction("Safe clone", partial(self.clone_requested.emit, profile.id))
         menu.addSeparator()
         menu.addAction("Move to Trash", partial(self.delete_requested.emit, profile.id))
         more.setMenu(menu)

@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QMessageBox, QPlainTextEdit, QPushButton, QScrollArea, QVBoxLayout, QWidget,
 )
 
+from ui.modern_controls import ModernComboBox
 from utils.proxy_parser import normalize_proxy, parse_proxy
 
 
@@ -38,7 +39,7 @@ class ProxyDialog(_BaseDialog):
         self.name_input.setPlaceholderText("Proxy US 01")
         self.url_input = QLineEdit(record.url if record else "")
         self.url_input.setPlaceholderText("ip:port or ip:port:username:password")
-        self.scheme_input = QComboBox()
+        self.scheme_input = ModernComboBox()
         self.scheme_input.addItem("HTTP", "http")
         self.scheme_input.addItem("HTTPS", "https")
         self.scheme_input.addItem("SOCKS5", "socks5")

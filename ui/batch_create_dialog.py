@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 
 from config import DEFAULT_LOCALE, DEFAULT_TIMEZONE
 from models.proxy import ProxyRecord
+from ui.modern_controls import ModernComboBox
 from utils.geo_options import (
     combo_value,
     country_to_locale,
@@ -73,18 +74,18 @@ class BatchCreateDialog(QDialog):
         self.start_input.setRange(1, 999999)
         self.start_input.setValue(1)
 
-        self.engine_input = QComboBox()
+        self.engine_input = ModernComboBox()
         self.engine_input.addItem("CloakBrowser Clean 146 (recommended)", "cloak")
         self.engine_input.addItem("Google Chrome Native (Chromium)", "chrome")
         self.engine_input.currentIndexChanged.connect(self._engine_changed)
 
-        self.platform_input = QComboBox()
+        self.platform_input = ModernComboBox()
         self.platform_input.addItem("Random OS", "random")
         self.platform_input.addItem("Windows 11", "windows")
         self.platform_input.addItem("macOS", "macos")
         self.platform_input.addItem("Linux", "linux")
 
-        self.proxy_input = QComboBox()
+        self.proxy_input = ModernComboBox()
         self.proxy_input.addItem("Direct connection", ("direct", ""))
         if self.proxies:
             self.proxy_input.addItem("Rotate through saved proxies", ("rotate", ""))
@@ -93,9 +94,9 @@ class BatchCreateDialog(QDialog):
             self.proxy_input.addItem(label, ("fixed", proxy.url))
         self.proxy_input.currentIndexChanged.connect(self._apply_proxy_geo)
 
-        self.timezone_input = QComboBox()
+        self.timezone_input = ModernComboBox()
         populate_timezone_combo(self.timezone_input, DEFAULT_TIMEZONE)
-        self.locale_input = QComboBox()
+        self.locale_input = ModernComboBox()
         populate_locale_combo(self.locale_input, DEFAULT_LOCALE)
         self.startup_url_input = QLineEdit()
         default_label = default_startup_url.strip() or "Blank tab"

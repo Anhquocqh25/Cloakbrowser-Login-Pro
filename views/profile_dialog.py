@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from config import APP_BASE_DIR, DEFAULT_LOCALE, DEFAULT_TIMEZONE
+from ui.modern_controls import ModernComboBox
 from utils.geo_options import (
     combo_value,
     country_to_locale,
@@ -31,6 +32,7 @@ from utils.geo_options import (
 )
 from utils.proxy_parser import normalize_proxy
 from utils.startup_url import normalize_startup_url
+from utils.user_agent import USER_AGENT_LABELS, detect_user_agent_mode, user_agent_for_mode
 
 
 class ProfileDialog(QDialog):
@@ -66,30 +68,36 @@ class ProfileDialog(QDialog):
         self.name_input.setPlaceholderText("Example: Facebook-US-01")
         self.proxy_input = QLineEdit()
         self.proxy_input.setPlaceholderText("http://user:password@host:port")
-        self.saved_proxy_input = QComboBox()
+        self.saved_proxy_input = ModernComboBox()
         self.saved_proxy_input.addItem("Do not use a saved proxy", "")
         for saved_proxy in self.proxies:
             self.saved_proxy_input.addItem(f"{saved_proxy.name} · {saved_proxy.location or saved_proxy.proxy_type}", saved_proxy.url)
         self.saved_proxy_input.currentIndexChanged.connect(self._apply_saved_proxy)
-        self.timezone_input = QComboBox()
+        self.timezone_input = ModernComboBox()
         populate_timezone_combo(self.timezone_input, DEFAULT_TIMEZONE)
-        self.locale_input = QComboBox()
+        self.locale_input = ModernComboBox()
         populate_locale_combo(self.locale_input, DEFAULT_LOCALE)
         self.startup_url_input = QLineEdit()
         default_label = default_startup_url.strip() or "Blank tab"
-        self.startup_url_input.setPlaceholderText(f"Leave empty to use default: {default_label}")
+        self.startup_url_input.setPlaceholderText(f"Leave empty to use default: {default_label}; comma = multiple tabs")
         self.auto_geoip_input = QCheckBox("Match timezone, locale and WebRTC to proxy")
         self.auto_geoip_input.setChecked(True)
         self.auto_geoip_input.setToolTip("Recommended when the profile uses a proxy")
         self.auto_geoip_input.toggled.connect(self._apply_selected_proxy_geo)
-        self.engine_input = QComboBox()
+        self.engine_input = ModernComboBox()
         self.engine_input.addItem("CloakBrowser Clean 146 (recommended)", "cloak")
         self.engine_input.addItem("Google Chrome Native (Chromium)", "chrome")
         self.engine_input.currentIndexChanged.connect(self._engine_changed)
-        self.platform_input = QComboBox()
+        self.platform_input = ModernComboBox()
         self.platform_input.addItem("Windows", "windows")
         self.platform_input.addItem("macOS", "macos")
         self.platform_input.addItem("Linux", "linux")
+        self.user_agent_mode_input = ModernComboBox()
+        for mode in ("auto", "windows", "macos", "linux", "custom"):
+            self.user_agent_mode_input.addItem(USER_AGENT_LABELS[mode], mode)
+        self.user_agent_mode_input.currentIndexChanged.connect(self._user_agent_mode_changed)
+        self.user_agent_input = QLineEdit()
+        self.user_agent_input.setPlaceholderText("Custom User-Agent, or preset preview")
         self.notes_input = QPlainTextEdit()
         self.notes_input.setPlaceholderText("Example: Facebook US, customer A, Windows device...")
         self.notes_input.setMaximumHeight(78)
@@ -121,6 +129,8 @@ class ProfileDialog(QDialog):
             self.saved_proxy_input,
             self.engine_input,
             self.platform_input,
+            self.user_agent_mode_input,
+            self.user_agent_input,
             self.screen_width_input,
             self.screen_height_input,
             self.fingerprint_seed_input,
@@ -130,6 +140,8 @@ class ProfileDialog(QDialog):
         form_layout.addRow("Profile name", self.name_input)
         form_layout.addRow("Browser engine", self.engine_input)
         form_layout.addRow("Platform", self.platform_input)
+        form_layout.addRow("User-Agent mode", self.user_agent_mode_input)
+        form_layout.addRow("User-Agent value", self.user_agent_input)
         form_layout.addRow("Saved proxy", self.saved_proxy_input)
         form_layout.addRow("Proxy", self.proxy_input)
         form_layout.addRow("Timezone", self.timezone_input)
@@ -174,8 +186,12 @@ class ProfileDialog(QDialog):
             self.engine_input.setCurrentIndex(max(0, self.engine_input.findData(profile.browser_engine)))
             platform_index = self.platform_input.findData(profile.platform)
             self.platform_input.setCurrentIndex(max(platform_index, 0))
+            ua_mode = detect_user_agent_mode(profile.user_agent)
+            self.user_agent_mode_input.setCurrentIndex(max(0, self.user_agent_mode_input.findData(ua_mode)))
+            self.user_agent_input.setText(profile.user_agent)
             self.notes_input.setPlainText(profile.notes)
         self._engine_changed()
+        self._user_agent_mode_changed()
 
     def _apply_saved_proxy(self) -> None:
         selected_url = self.saved_proxy_input.currentData()
@@ -202,8 +218,19 @@ class ProfileDialog(QDialog):
         native = self.engine_input.currentData() == "chrome"
         if native:
             self.platform_input.setCurrentIndex(max(0, self.platform_input.findData("windows")))
+            self.user_agent_mode_input.setCurrentIndex(max(0, self.user_agent_mode_input.findData("auto")))
+            self.user_agent_input.clear()
         self.platform_input.setEnabled(not native)
+        self.user_agent_mode_input.setEnabled(not native)
+        self.user_agent_input.setEnabled(not native)
         self.fingerprint_seed_input.setEnabled(not native)
+
+    def _user_agent_mode_changed(self) -> None:
+        mode = str(self.user_agent_mode_input.currentData() or "auto")
+        if mode != "custom":
+            self.user_agent_input.setText(user_agent_for_mode(mode))
+        self.user_agent_input.setReadOnly(mode != "custom")
+        self.user_agent_input.setEnabled(self.engine_input.currentData() != "chrome")
 
     def validate_and_accept(self) -> None:
         if not self.name_input.text().strip():
@@ -229,6 +256,10 @@ class ProfileDialog(QDialog):
             "auto_geoip": self.auto_geoip_input.isChecked(),
             "platform": self.platform_input.currentData(),
             "notes": self.notes_input.toPlainText().strip(),
+            "user_agent": user_agent_for_mode(
+                str(self.user_agent_mode_input.currentData() or "auto"),
+                self.user_agent_input.text(),
+            ),
             "browser_engine": self.engine_input.currentData(),
             "startup_url": self.startup_url_input.text().strip(),
         }

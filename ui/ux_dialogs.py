@@ -13,6 +13,7 @@ from config import APP_BASE_DIR
 from models.bookmark import BookmarkRecord
 from models.extension import ExtensionRecord
 from models.proxy import ProxyRecord
+from ui.modern_controls import ModernComboBox
 from utils.i18n import tr
 
 
@@ -69,7 +70,7 @@ class OnboardingDialog(QDialog):
     def _preferences_page(self, language: str, startup_url: str) -> QWidget:
         page, layout = self._page("Basic preferences", "You can change these settings later.")
         form = QFormLayout(); form.setSpacing(12)
-        self.language_input = QComboBox(); self.language_input.addItem("English", "en"); self.language_input.addItem("Tiếng Việt", "vi")
+        self.language_input = ModernComboBox(); self.language_input.addItem("English", "en"); self.language_input.addItem("Tiếng Việt", "vi")
         self.language_input.setCurrentIndex(max(0, self.language_input.findData(language)))
         self.startup_input = QLineEdit(startup_url); self.startup_input.setPlaceholderText("https://example.com · optional")
         storage = QLabel(str(APP_BASE_DIR)); storage.setWordWrap(True); storage.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -143,7 +144,7 @@ class BulkEditDialog(QDialog):
         self.startup_enabled.setText(tr("Startup website"))
         self.startup_input.setPlaceholderText("https://example.com · empty = global default")
         form.addRow(self.startup_enabled, self.startup_input)
-        self.proxy_enabled = QCheckBox(tr("Proxy")); self.proxy_input = QComboBox(); self.proxy_input.setEnabled(False)
+        self.proxy_enabled = QCheckBox(tr("Proxy")); self.proxy_input = ModernComboBox(); self.proxy_input.setEnabled(False)
         self.proxy_enabled.toggled.connect(self.proxy_input.setEnabled)
         self.proxy_input.addItem(tr("No proxy"), "")
         self.proxy_input.addItem(tr("Best proxy from Smart Pool"), "__best__")
@@ -154,7 +155,7 @@ class BulkEditDialog(QDialog):
         root.addLayout(form)
 
         notes_row = QHBoxLayout()
-        self.notes_enabled = QCheckBox(tr("Notes")); self.notes_mode = QComboBox(); self.notes_mode.addItem(tr("Append"), "append"); self.notes_mode.addItem(tr("Replace"), "replace")
+        self.notes_enabled = QCheckBox(tr("Notes")); self.notes_mode = ModernComboBox(); self.notes_mode.addItem(tr("Append"), "append"); self.notes_mode.addItem(tr("Replace"), "replace")
         self.notes_input = QTextEdit(); self.notes_input.setFixedHeight(72)
         self.notes_mode.setEnabled(False); self.notes_input.setEnabled(False)
         self.notes_enabled.toggled.connect(self.notes_mode.setEnabled); self.notes_enabled.toggled.connect(self.notes_input.setEnabled)

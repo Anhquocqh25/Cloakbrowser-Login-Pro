@@ -20,14 +20,18 @@ QToolButton#sidebarToggle { border: none; background: transparent; color: #6b728
 QPushButton#navButton {
     background-color: transparent;
     border: none;
-    border-radius: 8px;
+    border-radius: 10px;
     color: #6b7280;
     font-weight: 500;
-    padding: 9px 13px;
+    padding: 9px 13px 9px 12px;
     text-align: left;
 }
 QPushButton#navButton:hover { background-color: #f3f4f6; color: #111827; }
-QPushButton#navButton:checked { background-color: #e8f8f4; color: #128a74; font-weight: 600; }
+QPushButton#navButton:checked { background-color: #eaf2ff; color: #2f73f6; font-weight: 600; }
+QPushButton#navButton[collapsed="true"] {
+    padding: 9px;
+    text-align: center;
+}
 QStackedWidget#mainPages { background-color: #f7f8fa; }
 QFrame#dashboardCard {
     background-color: #ffffff;
@@ -83,13 +87,53 @@ QPushButton#bulkOpenButton:disabled, QPushButton#bulkDeleteButton:disabled {
 QLineEdit, QSpinBox, QComboBox, QPlainTextEdit {
     background-color: #ffffff;
     border: 1px solid #dfe3e8;
-    border-radius: 7px;
+    border-radius: 9px;
     color: #111827;
     padding: 8px 10px;
     selection-background-color: #c9f2e9;
 }
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus { border-color: #20b89a; }
 QLineEdit#profileSearch { background-color: #f9fafb; border-color: transparent; min-height: 18px; }
+QComboBox {
+    padding: 7px 32px 7px 11px;
+    min-height: 20px;
+}
+QComboBox:hover {
+    background-color: #fbfcfe;
+    border-color: #cbd5e1;
+}
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    width: 30px;
+    border: none;
+    background: transparent;
+}
+QComboBox::down-arrow {
+    image: none;
+    width: 0;
+    height: 0;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid #6b7280;
+    margin-right: 10px;
+}
+QListView#modernComboPopup {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 9px;
+    padding: 5px;
+    outline: none;
+    color: #374151;
+    selection-background-color: transparent;
+    selection-color: #374151;
+}
+QListView#modernComboPopup::item {
+    min-height: 34px;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
 
 QPushButton, QToolButton {
     background-color: #ffffff;

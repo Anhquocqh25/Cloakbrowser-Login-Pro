@@ -14,6 +14,7 @@ from models.bookmark import BookmarkRecord
 from models.extension import ExtensionRecord
 from models.profile import Profile
 from models.proxy import ProxyRecord
+from ui.modern_controls import ModernComboBox
 from utils.geo_options import (
     combo_value,
     country_to_locale,
@@ -25,6 +26,7 @@ from utils.geo_options import (
 )
 from utils.proxy_parser import normalize_proxy, parse_proxy
 from utils.startup_url import normalize_startup_url
+from utils.user_agent import USER_AGENT_LABELS, detect_user_agent_mode, user_agent_for_mode, user_agent_platform
 
 
 class ProfileEditorPage(QWidget):
@@ -155,17 +157,17 @@ class ProfileEditorPage(QWidget):
     def _overview_tab(self) -> QWidget:
         scroll, _, layout = self._scroll_tab()
         card, form = self._section("Browser profile", "Core identity and display settings for this profile.")
-        self.engine_input = QComboBox()
+        self.engine_input = ModernComboBox()
         self.engine_input.addItem("CloakBrowser Clean 146 (recommended)", "cloak")
         self.engine_input.addItem("Google Chrome Native (Chromium)", "chrome")
         self.engine_note = QLabel()
         self.engine_note.setObjectName("engineModeNote")
         self.engine_note.setWordWrap(True)
-        self.platform_input = QComboBox()
+        self.platform_input = ModernComboBox()
         self.platform_input.addItem("Windows 11", "windows")
         self.platform_input.addItem("macOS", "macos")
         self.platform_input.addItem("Linux", "linux")
-        self.resolution_input = QComboBox()
+        self.resolution_input = ModernComboBox()
         for width, height in ((1920, 1080), (1600, 900), (1536, 864), (1440, 900), (1366, 768), (1280, 800)):
             self.resolution_input.addItem(f"{width} × {height}", (width, height))
         self.resolution_input.setEditable(True)
@@ -198,11 +200,11 @@ class ProfileEditorPage(QWidget):
             "Proxy connection",
             "Paste ip:port or ip:port:username:password. Full proxy URLs are also supported.",
         )
-        self.proxy_scheme = QComboBox()
+        self.proxy_scheme = ModernComboBox()
         self.proxy_scheme.addItem("HTTP", "http")
         self.proxy_scheme.addItem("HTTPS", "https")
         self.proxy_scheme.addItem("SOCKS5", "socks5")
-        self.saved_proxy_input = QComboBox()
+        self.saved_proxy_input = ModernComboBox()
         self.saved_proxy_input.addItem("Custom / no saved proxy", "")
         self.saved_proxy_input.currentIndexChanged.connect(self._apply_saved_proxy)
         self.proxy_input = QLineEdit()
@@ -226,9 +228,9 @@ class ProfileEditorPage(QWidget):
     def _timezone_tab(self) -> QWidget:
         scroll, _, layout = self._scroll_tab()
         card, form = self._section("Language & timezone", "Manual values apply when Based on proxy is disabled.")
-        self.timezone_input = QComboBox()
+        self.timezone_input = ModernComboBox()
         populate_timezone_combo(self.timezone_input, DEFAULT_TIMEZONE)
-        self.locale_input = QComboBox()
+        self.locale_input = ModernComboBox()
         populate_locale_combo(self.locale_input, DEFAULT_LOCALE)
         form.addRow("Timezone", self.timezone_input)
         form.addRow("Language / locale", self.locale_input)
@@ -282,7 +284,10 @@ class ProfileEditorPage(QWidget):
         scroll, _, layout = self._scroll_tab()
         card, form = self._section("Navigator", "Only settings supported by the current CloakBrowser engine are exposed.")
         self.user_agent_input = QLineEdit()
-        self.user_agent_input.setPlaceholderText("Leave empty to let CloakBrowser generate a consistent User-Agent")
+        self.user_agent_mode_input = ModernComboBox()
+        for mode in ("auto", "windows", "macos", "linux", "custom"):
+            self.user_agent_mode_input.addItem(USER_AGENT_LABELS[mode], mode)
+        self.user_agent_input.setPlaceholderText("Custom User-Agent, or preset preview")
         seed_row = QHBoxLayout()
         seed_row.setContentsMargins(0, 0, 0, 0)
         self.seed_input = QSpinBox()
@@ -291,7 +296,8 @@ class ProfileEditorPage(QWidget):
         self.regenerate_seed_button.clicked.connect(lambda: self.seed_input.setValue(random.randint(100000, 999999999)))
         seed_row.addWidget(self.seed_input, 1)
         seed_row.addWidget(self.regenerate_seed_button)
-        form.addRow("Custom User-Agent", self.user_agent_input)
+        form.addRow("User-Agent mode", self.user_agent_mode_input)
+        form.addRow("User-Agent value", self.user_agent_input)
         form.addRow("Fingerprint seed", seed_row)
         layout.addWidget(card)
         layout.addStretch(1)
@@ -326,11 +332,13 @@ class ProfileEditorPage(QWidget):
         self.startup_url_input.setPlaceholderText(
             f"Global default: {self.default_startup_url}"
             if self.default_startup_url
-            else "Global default: Blank tab"
+            else "Global default: Blank tab; use comma to open multiple URLs"
         )
         set_combo_value(self.timezone_input, profile.timezone, timezone_label)
         set_combo_value(self.locale_input, profile.locale, locale_label)
         self.auto_geoip_input.setChecked(profile.auto_geoip)
+        ua_mode = detect_user_agent_mode(profile.user_agent)
+        self.user_agent_mode_input.setCurrentIndex(max(0, self.user_agent_mode_input.findData(ua_mode)))
         self.user_agent_input.setText(profile.user_agent)
         self.seed_input.setValue(profile.fingerprint_seed or random.randint(100000, 999999999))
         self.seed_input.setEnabled(not profile.seed_locked)
@@ -364,6 +372,7 @@ class ProfileEditorPage(QWidget):
         self._fill_bookmarks(profile.bookmark_ids)
         self.tabs.setCurrentIndex(0)
         self._engine_changed()
+        self._user_agent_mode_changed()
         self._update_manual_fields()
         self._update_summary()
 
@@ -487,7 +496,7 @@ class ProfileEditorPage(QWidget):
             "auto_geoip": self.auto_geoip_input.isChecked(),
             "platform": self.platform_input.currentData(),
             "notes": self.notes_input.toPlainText().strip(),
-            "user_agent": self.user_agent_input.text().strip(),
+            "user_agent": self._selected_user_agent(),
             "extension_ids": self._checked_ids(self.extensions_list),
             "bookmark_ids": self._checked_ids(self.bookmarks_list),
             "browser_engine": self.engine_input.currentData(),
@@ -503,6 +512,7 @@ class ProfileEditorPage(QWidget):
             (self.name_input, "textChanged"), (self.proxy_input, "textChanged"),
             (self.timezone_input, "currentTextChanged"), (self.locale_input, "currentTextChanged"),
             (self.user_agent_input, "textChanged"), (self.notes_input, "textChanged"),
+            (self.user_agent_mode_input, "currentIndexChanged"),
             (self.startup_url_input, "textChanged"),
             (self.group_input, "textChanged"), (self.tags_input, "textChanged"),
             (self.platform_input, "currentIndexChanged"), (self.resolution_input, "currentTextChanged"),
@@ -514,6 +524,7 @@ class ProfileEditorPage(QWidget):
         self.auto_geoip_input.toggled.connect(self._update_manual_fields)
         self.auto_geoip_input.toggled.connect(self._apply_current_proxy_geo)
         self.engine_input.currentIndexChanged.connect(self._engine_changed)
+        self.user_agent_mode_input.currentIndexChanged.connect(self._user_agent_mode_changed)
         self.extensions_list.itemChanged.connect(self._update_summary)
         self.bookmarks_list.itemChanged.connect(self._update_summary)
 
@@ -526,6 +537,7 @@ class ProfileEditorPage(QWidget):
         native = self.engine_input.currentData() == "chrome"
         if native:
             self.platform_input.setCurrentIndex(max(0, self.platform_input.findData("windows")))
+            self.user_agent_mode_input.setCurrentIndex(max(0, self.user_agent_mode_input.findData("auto")))
             self.user_agent_input.clear()
             self.engine_note.setText(
                 "Runs installed Google Chrome without Cloak fingerprint flags. "
@@ -538,8 +550,26 @@ class ProfileEditorPage(QWidget):
                 "Audio, screen, locale, timezone and proxy WebRTC identity stay profile-specific."
             )
         self.platform_input.setEnabled(not native)
+        self.user_agent_mode_input.setEnabled(not native)
         self.user_agent_input.setEnabled(not native)
         self.seed_input.setEnabled(not native)
+        self._update_summary()
+
+    def _selected_user_agent(self) -> str:
+        mode = str(self.user_agent_mode_input.currentData() or "auto")
+        return user_agent_for_mode(mode, self.user_agent_input.text())
+
+    def _user_agent_mode_changed(self, *_args) -> None:
+        mode = str(self.user_agent_mode_input.currentData() or "auto")
+        if mode != "custom":
+            self.user_agent_input.setText(user_agent_for_mode(mode))
+        self.user_agent_input.setReadOnly(mode != "custom")
+        self.user_agent_input.setEnabled(self.engine_input.currentData() != "chrome")
+        platform = user_agent_platform(self._selected_user_agent())
+        if platform and platform != self.platform_input.currentData():
+            self.user_agent_input.setToolTip("Compatibility Guard will warn/block if User-Agent and OS do not match.")
+        else:
+            self.user_agent_input.setToolTip("")
         self._update_summary()
 
     def _update_summary(self, *_args) -> None:
@@ -556,7 +586,8 @@ class ProfileEditorPage(QWidget):
         extensions = self._checked_ids(self.extensions_list) if hasattr(self, "extensions_list") else []
         bookmarks = self._checked_ids(self.bookmarks_list) if hasattr(self, "bookmarks_list") else []
         timezone = "Based on proxy" if self.auto_geoip_input.isChecked() else combo_value(self.timezone_input, DEFAULT_TIMEZONE)
-        ua = "Generated by CloakBrowser" if not self.user_agent_input.text().strip() else "Custom"
+        ua_mode = str(self.user_agent_mode_input.currentData() or "auto")
+        ua = USER_AGENT_LABELS.get(ua_mode, "Custom User-Agent")
         lines = (
             ("Profile", self.name_input.text() or "Untitled"),
             ("Engine", self.engine_input.currentText()),

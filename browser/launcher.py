@@ -10,7 +10,7 @@ from typing import Any
 from models.profile import Profile
 from utils.local_proxy_bridge import LocalProxyBridge
 from utils.paths import profile_user_data_dir
-from utils.startup_url import normalize_startup_url
+from utils.startup_url import startup_url_args
 from utils.window_title import WindowTitleTracker
 
 try:
@@ -235,7 +235,7 @@ def launch_cloak_clean(profile: Profile, extension_paths: list[str] | None = Non
         extension_paths=_extension_paths(extension_paths),
     )
     try:
-        args.append(normalize_startup_url(profile.startup_url) or "about:blank")
+        args.extend(startup_url_args(profile.startup_url))
     except ValueError as error:
         if proxy_bridge is not None:
             proxy_bridge.close()
@@ -282,7 +282,7 @@ def launch_native_chrome(profile: Profile, extension_paths: list[str] | None = N
     if os.environ.get("CLOAK_LOGIN_HEADLESS", "0") == "1":
         args.append("--headless=new")
     try:
-        args.append(normalize_startup_url(profile.startup_url) or "about:blank")
+        args.extend(startup_url_args(profile.startup_url))
     except ValueError as error:
         if proxy_bridge is not None:
             proxy_bridge.close()

@@ -16,11 +16,11 @@ VSVersionInfo(
         [
           StringStruct(u'CompanyName', u'CloakBrowser Login'),
           StringStruct(u'FileDescription', u'CloakBrowser Profile Manager'),
-          StringStruct(u'FileVersion', u'0.1.1'),
+          StringStruct(u'FileVersion', u'0.1.2'),
           StringStruct(u'InternalName', u'CloakBrowser Login'),
           StringStruct(u'OriginalFilename', u'CloakBrowser Login.exe'),
           StringStruct(u'ProductName', u'CloakBrowser Login'),
-          StringStruct(u'ProductVersion', u'0.1.1')
+          StringStruct(u'ProductVersion', u'0.1.2')
         ]
       )
     ]),

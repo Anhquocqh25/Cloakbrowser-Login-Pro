@@ -31,6 +31,7 @@ from utils.paths import profile_user_data_dir
 from utils.proxy_parser import normalize_proxy
 from utils.proxy_checker import ProxyCheckResult, check_proxy as perform_proxy_check
 from utils.startup_url import normalize_startup_url
+from utils.geo_options import country_to_locale
 from services.backup_service import (
     create_full_backup, export_profile, finish_profile_import, prune_backups,
     read_imported_profile, restore_full_backup,
@@ -63,14 +64,24 @@ class BrowserSessionWorker(QObject):
         self.profile = profile
         self.extension_paths = extension_paths or []
         self._stop_requested = threading.Event()
+        self._context = None
 
     def request_stop(self) -> None:
         self._stop_requested.set()
+
+    def browser_process_alive(self) -> bool | None:
+        if self._context is None:
+            return None
+        try:
+            return bool(self._context.is_alive())
+        except Exception:
+            return False
 
     def run(self) -> None:
         context = None
         try:
             context = launch_browser(self.profile, self.extension_paths)
+            self._context = context
             self.opened.emit(self.profile.id)
             while not self._stop_requested.is_set() and context.is_alive():
                 self._stop_requested.wait(0.25)
@@ -401,6 +412,40 @@ class ProfileController(QObject):
     def get_profile(self, profile_id: str) -> Profile | None:
         return self.repository.get_profile(profile_id)
 
+    def _unique_fingerprint_seed(self, preferred: int | None = None) -> int:
+        used = {
+            profile.fingerprint_seed
+            for profile in self.repository.list_profiles()
+            if profile.fingerprint_seed is not None
+        }
+        if preferred and preferred not in used:
+            return int(preferred)
+        seed = random.randint(100000, 999999999)
+        while seed in used:
+            seed = random.randint(100000, 999999999)
+        return seed
+
+    def _apply_saved_proxy_geo_defaults(
+        self,
+        proxy_url: str | None,
+        timezone: str,
+        locale: str,
+        auto_geoip: bool,
+    ) -> tuple[str, str]:
+        """Use checked proxy geo fields as safe UI defaults.
+
+        Cloak still resolves the live proxy identity again at launch. This only
+        keeps the stored profile fields readable and consistent in the manager.
+        """
+        if not auto_geoip or not proxy_url:
+            return timezone or DEFAULT_TIMEZONE, locale or DEFAULT_LOCALE
+        record = next((item for item in self.proxy_repository.list_all() if item.url == proxy_url), None)
+        if not record:
+            return timezone or DEFAULT_TIMEZONE, locale or DEFAULT_LOCALE
+        resolved_timezone = record.timezone or timezone or DEFAULT_TIMEZONE
+        resolved_locale = country_to_locale(record.country_code) or locale or DEFAULT_LOCALE
+        return resolved_timezone, resolved_locale
+
     def load_proxies(self) -> list[ProxyRecord]:
         records = self.proxy_repository.list_all()
         self.proxies_changed.emit(records)
@@ -663,15 +708,19 @@ class ProfileController(QObject):
         if engine == "chrome":
             platform = "windows"
             user_agent = ""
+        normalized_proxy = normalize_proxy(proxy) if proxy else None
+        resolved_timezone, resolved_locale = self._apply_saved_proxy_geo_defaults(
+            normalized_proxy, timezone, locale, auto_geoip
+        )
         profile = Profile(
             id=profile_id,
             name=name.strip(),
-            proxy=normalize_proxy(proxy) if proxy else None,
-            timezone=timezone or DEFAULT_TIMEZONE,
-            locale=locale or DEFAULT_LOCALE,
+            proxy=normalized_proxy,
+            timezone=resolved_timezone,
+            locale=resolved_locale,
             screen_width=screen_width or DEFAULT_SCREEN_WIDTH,
             screen_height=screen_height or DEFAULT_SCREEN_HEIGHT,
-            fingerprint_seed=fingerprint_seed or random.randint(100000, 999999999),
+            fingerprint_seed=int(fingerprint_seed) if fingerprint_seed else self._unique_fingerprint_seed(),
             auto_geoip=auto_geoip,
             platform=platform,
             browser_engine=engine,
@@ -734,16 +783,23 @@ class ProfileController(QObject):
                 screen_width = int(payload.get("screen_width") or DEFAULT_SCREEN_WIDTH)
                 screen_height = int(payload.get("screen_height") or DEFAULT_SCREEN_HEIGHT)
             seed = unique_seed()
+            normalized_proxy = normalize_proxy(str(payload.get("proxy") or "")) or None
+            resolved_timezone, resolved_locale = self._apply_saved_proxy_geo_defaults(
+                normalized_proxy,
+                str(payload.get("timezone") or DEFAULT_TIMEZONE),
+                str(payload.get("locale") or DEFAULT_LOCALE),
+                bool(payload.get("auto_geoip", True)),
+            )
             platform_label = {"windows": "Windows 11", "macos": "macOS", "linux": "Linux"}[platform]
             shared_notes = str(payload.get("notes") or "").strip()
-            config_note = f"{platform_label} · {screen_width}x{screen_height} · {payload.get('locale') or DEFAULT_LOCALE}"
+            config_note = f"{platform_label} · {screen_width}x{screen_height} · {resolved_locale}"
             notes = f"{shared_notes} · {config_note}" if shared_notes else config_note
             profile = Profile(
                 id=str(uuid.uuid4()),
                 name=name,
-                proxy=str(payload.get("proxy") or "") or None,
-                timezone=str(payload.get("timezone") or DEFAULT_TIMEZONE),
-                locale=str(payload.get("locale") or DEFAULT_LOCALE),
+                proxy=normalized_proxy,
+                timezone=resolved_timezone,
+                locale=resolved_locale,
                 screen_width=screen_width,
                 screen_height=screen_height,
                 fingerprint_seed=seed,
@@ -797,10 +853,14 @@ class ProfileController(QObject):
             raise ValueError("Profile does not exist.")
         if profile.deleted_at:
             raise ValueError("Profile is already in Trash.")
+        normalized_proxy = normalize_proxy(proxy) if proxy else None
+        resolved_timezone, resolved_locale = self._apply_saved_proxy_geo_defaults(
+            normalized_proxy, timezone, locale, auto_geoip
+        )
         profile.name = name.strip()
-        profile.proxy = normalize_proxy(proxy) if proxy else None
-        profile.timezone = timezone or DEFAULT_TIMEZONE
-        profile.locale = locale or DEFAULT_LOCALE
+        profile.proxy = normalized_proxy
+        profile.timezone = resolved_timezone
+        profile.locale = resolved_locale
         profile.screen_width = screen_width or DEFAULT_SCREEN_WIDTH
         profile.screen_height = screen_height or DEFAULT_SCREEN_HEIGHT
         if profile.seed_locked and fingerprint_seed and fingerprint_seed != profile.fingerprint_seed:
@@ -836,6 +896,8 @@ class ProfileController(QObject):
         source = self.repository.get_profile(source_profile_id)
         if not source:
             raise ValueError("Source profile does not exist.")
+        if source.deleted_at:
+            raise ValueError("Restore this profile before cloning it.")
         return self.create_profile(
             name=f"{source.name} - Clone",
             proxy=source.proxy,
@@ -843,7 +905,7 @@ class ProfileController(QObject):
             locale=source.locale,
             screen_width=source.screen_width,
             screen_height=source.screen_height,
-            fingerprint_seed=random.randint(100000, 999999999),
+            fingerprint_seed=self._unique_fingerprint_seed(source.fingerprint_seed),
             auto_geoip=source.auto_geoip,
             platform=source.platform,
             notes=source.notes,
@@ -994,7 +1056,21 @@ class ProfileController(QObject):
         return total
 
     def reconcile_profile_statuses(self) -> None:
-        active = set(self.worker_threads)
+        active: set[str] = set()
+        stale: list[str] = []
+        for profile_id, thread in list(self.worker_threads.items()):
+            worker = self.workers.get(profile_id)
+            alive = worker.browser_process_alive() if worker else None
+            if not thread.isRunning() or alive is False:
+                stale.append(profile_id)
+            else:
+                active.add(profile_id)
+        for profile_id in stale:
+            worker = self.workers.get(profile_id)
+            if worker is not None:
+                worker.request_stop()
+            if profile_id not in active:
+                self._cleanup_session(profile_id)
         checking = {
             key.split(":", 1)[1] for key in self.proxy_check_threads if key.startswith("profile:")
         }
@@ -1225,6 +1301,26 @@ class ProfileController(QObject):
             version_info=self.cloak_version_info() if profile.browser_engine == "cloak" else None,
         )
 
+    def profile_snapshot_report(self, profile_id: str) -> dict[str, object]:
+        profile = self.repository.get_profile(profile_id)
+        if not profile:
+            raise ValueError("Profile does not exist.")
+        version = self.cloak_version_info() if profile.browser_engine == "cloak" else {}
+        effective = replace(profile, cloak_version=self.config_store.cloak_browser_version())
+        snapshot = snapshot_data(effective, version)
+        consistency = check_consistency(profile, version)
+        compatibility = self.profile_compatibility(profile_id)
+        proxy_record = next((item for item in self.proxy_repository.list_all() if item.url == profile.proxy), None)
+        return {
+            "profile": profile,
+            "snapshot": snapshot,
+            "fingerprint_hash": fingerprint_hash(snapshot),
+            "consistency": consistency,
+            "compatibility": compatibility,
+            "proxy": proxy_record,
+            "version": version,
+        }
+
     def _start_browser(self, profile: Profile) -> None:
         profile_id = profile.id
         if profile_id in self.worker_threads:
@@ -1281,6 +1377,27 @@ class ProfileController(QObject):
         self.proxy_check_threads[key] = thread
         thread.start()
 
+    def _sync_profiles_from_proxy_result(self, proxy_url: str, result: ProxyCheckResult) -> bool:
+        if not result.alive or not proxy_url:
+            return False
+        changed = False
+        locale = country_to_locale(result.country_code)
+        for profile in self.repository.list_profiles():
+            if profile.proxy != proxy_url or not profile.auto_geoip or profile.id in self.worker_threads:
+                continue
+            profile_changed = False
+            if result.timezone and profile.timezone != result.timezone:
+                profile.timezone = result.timezone
+                profile_changed = True
+            if locale and profile.locale != locale:
+                profile.locale = locale
+                profile_changed = True
+            if profile_changed:
+                profile.updated_at = Profile.now_timestamp()
+                self.repository.update_profile(profile)
+                changed = True
+        return changed
+
     def _cleanup_proxy_check(self, key: str) -> None:
         self.proxy_check_workers.pop(key, None)
         self.proxy_check_threads.pop(key, None)
@@ -1298,8 +1415,10 @@ class ProfileController(QObject):
                 result.checked_at, result.error, result.location,
                 result.country_code, result.timezone,
             )
-            self.load_proxies()
             record = self.proxy_repository.get(target_id)
+            if record and self._sync_profiles_from_proxy_result(record.url, result):
+                self.load_profiles()
+            self.load_proxies()
             self._log("proxy.checked", severity="info" if result.alive else "warning", details=f"{record.name if record else target_id}: {result.exit_ip or result.error}")
             if result.alive:
                 location_text = f" · {result.location}" if result.location else ""
@@ -1316,6 +1435,8 @@ class ProfileController(QObject):
                 result.checked_at, result.error, result.location,
                 result.country_code, result.timezone,
             )
+            if self._sync_profiles_from_proxy_result(profile.proxy, result):
+                profile = self.repository.get_profile(target_id)
         self.load_proxies()
         if cancelled or not profile:
             if profile:

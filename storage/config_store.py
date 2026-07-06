@@ -119,3 +119,54 @@ class ConfigStore:
 
     def set_cloak_browser_version(self, version: str) -> None:
         self.set("browser.cloak_version", str(version or "").strip())
+
+    def onboarding_completed(self) -> bool:
+        return bool(self.get("experience.onboarding_completed", False))
+
+    def set_onboarding_completed(self, completed: bool = True) -> None:
+        self.set("experience.onboarding_completed", bool(completed))
+
+    def last_page(self) -> int:
+        try:
+            return max(0, int(self.get("experience.last_page", 12) or 12))
+        except (TypeError, ValueError):
+            return 12
+
+    def set_last_page(self, page: int) -> None:
+        self.set("experience.last_page", max(0, int(page)))
+
+    def sidebar_collapsed(self) -> bool:
+        return bool(self.get("experience.sidebar_collapsed", False))
+
+    def set_sidebar_collapsed(self, collapsed: bool) -> None:
+        self.set("experience.sidebar_collapsed", bool(collapsed))
+
+    def profile_presets(self) -> list[dict[str, Any]]:
+        value = self.get("experience.profile_presets", [])
+        return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    def set_profile_presets(self, presets: list[dict[str, Any]]) -> None:
+        self.set("experience.profile_presets", presets)
+
+    def saved_views(self) -> list[dict[str, Any]]:
+        value = self.get("experience.saved_views", [])
+        return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+    def set_saved_views(self, views: list[dict[str, Any]]) -> None:
+        self.set("experience.saved_views", views)
+
+    def proxy_pool_enabled(self) -> bool:
+        return bool(self.get("proxy_pool.enabled", True))
+
+    def set_proxy_pool_enabled(self, enabled: bool) -> None:
+        self.set("proxy_pool.enabled", bool(enabled))
+
+    def proxy_pool_interval_minutes(self) -> int:
+        try:
+            value = int(self.get("proxy_pool.interval_minutes", 30) or 30)
+        except (TypeError, ValueError):
+            value = 30
+        return value if value in {5, 15, 30, 60, 180} else 30
+
+    def set_proxy_pool_interval_minutes(self, minutes: int) -> None:
+        self.set("proxy_pool.interval_minutes", minutes if minutes in {5, 15, 30, 60, 180} else 30)

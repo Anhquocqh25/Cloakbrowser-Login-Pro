@@ -8,10 +8,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from PySide6.QtCore import QProcess, QSignalBlocker, QTimer, Qt
-from PySide6.QtGui import QColor, QFont, QPixmap
+from PySide6.QtGui import QColor, QFont, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout,
-    QComboBox, QFileDialog, QHeaderView, QLabel, QLineEdit,
+    QComboBox, QFileDialog, QGridLayout, QHeaderView, QLabel, QLineEdit,
+    QInputDialog,
     QMainWindow, QMenu, QMessageBox, QPushButton,
     QProgressBar, QStackedWidget, QTableWidget, QTableWidgetItem,
     QToolButton, QVBoxLayout, QWidget,
@@ -33,11 +34,29 @@ from ui.batch_create_dialog import BatchCreateDialog
 from ui.column_settings_dialog import ColumnSettingsDialog
 from ui.profile_table import PROFILE_COLUMNS, ProfileTable
 from ui.profile_editor_page import ProfileEditorPage
+from ui.task_center import TaskCenterPage
+from ui.ux_dialogs import BulkEditDialog, CommandPaletteDialog, OnboardingDialog, PresetChoiceDialog
 from views.manage_dialogs import BookmarkDialog, ProxyDialog
 from views.profile_dialog import ProfileDialog
 from utils.startup_url import normalize_startup_url
-from utils.i18n import tr, translate_tree
+from utils.i18n import set_language, tr, translate_tree
 from utils.flag_icon import country_flag_icon
+
+
+PAGE_PROFILES = 0
+PAGE_PROXIES = 1
+PAGE_SETTINGS = 2
+PAGE_EXTENSIONS = 3
+PAGE_BOOKMARKS = 4
+PAGE_STARTUP = 5
+PAGE_TRASH = 6
+PAGE_BACKUP = 7
+PAGE_HEALTH = 8
+PAGE_ACTIVITY = 9
+PAGE_FINGERPRINT = 10
+PAGE_EDITOR = 11
+PAGE_DASHBOARD = 12
+PAGE_TASKS = 13
 
 
 class MainWindow(QMainWindow):
@@ -60,6 +79,12 @@ class MainWindow(QMainWindow):
         self._update_check_thread: UpdateCheckThread | None = None
         self._update_download_thread: UpdateDownloadThread | None = None
         self._installation_mode = installation_mode()
+        self._install_after_download = False
+        self._undo_stack: list[tuple[str, object]] = []
+        self._nav_buttons: list[QPushButton] = []
+        self._sidebar_collapsed = self.config_store.sidebar_collapsed()
+        self._task_ids: dict[str, str] = {}
+        self._auto_sidebar_applied = False
 
         self.width_save_timer = QTimer(self)
         self.width_save_timer.setSingleShot(True)
@@ -96,13 +121,28 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self._build_fingerprint_page())    # 10
         self.profile_editor = ProfileEditorPage()
         self.pages.addWidget(self.profile_editor)                # 11
+        self.pages.addWidget(self._build_dashboard_page())       # 12
+        self.task_center = TaskCenterPage()
+        self.pages.addWidget(self.task_center)                    # 13
         root.addWidget(self.pages, 1)
 
         self.statusBar().setSizeGripEnabled(False)
         self.statusBar().showMessage(tr("Ready"))
+        self.undo_button = QPushButton(tr("Undo"))
+        self.undo_button.clicked.connect(self._undo_last_action)
+        self.undo_button.hide()
+        self.statusBar().addPermanentWidget(self.undo_button)
+        self.pages.currentChanged.connect(self._page_changed)
+        start_page = self.config_store.last_page()
+        if start_page not in range(self.pages.count()) or start_page == PAGE_EDITOR:
+            start_page = PAGE_DASHBOARD
+        self.pages.setCurrentIndex(start_page)
+        self._sync_nav_selection(start_page)
+        self._set_sidebar_collapsed(self._sidebar_collapsed, persist=False)
 
     def _build_sidebar(self) -> QWidget:
         sidebar = QFrame()
+        self.sidebar = sidebar
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(220)
         layout = QVBoxLayout(sidebar)
@@ -122,30 +162,40 @@ class MainWindow(QMainWindow):
         brand.setObjectName("brandTitle")
         caption = QLabel("Profile Manager")
         caption.setObjectName("brandCaption")
-        brand_labels = QVBoxLayout()
+        self.brand_labels_widget = QWidget()
+        brand_labels = QVBoxLayout(self.brand_labels_widget)
         brand_labels.setContentsMargins(0, 0, 0, 0)
         brand_labels.setSpacing(1)
         brand_labels.addWidget(brand)
         brand_labels.addWidget(caption)
         brand_row.addWidget(logo)
-        brand_row.addLayout(brand_labels, 1)
+        brand_row.addWidget(self.brand_labels_widget, 1)
+        self.sidebar_toggle = QToolButton()
+        self.sidebar_toggle.setObjectName("sidebarToggle")
+        self.sidebar_toggle.setText("‹")
+        self.sidebar_toggle.setToolTip("Collapse sidebar")
+        self.sidebar_toggle.clicked.connect(self.toggle_sidebar)
+        brand_row.addWidget(self.sidebar_toggle)
         layout.addLayout(brand_row)
         layout.addSpacing(20)
 
         self.nav_group = QButtonGroup(self)
         self.nav_group.setExclusive(True)
         required_nav = [
-            ("All profiles", 0), ("Profiles", 0), ("Proxies", 1),
-            ("Startup website", 5),
-            ("Trash", 6),
-            ("Backup & Restore", 7),
-            ("Profile Health", 8),
-            ("Activity Log", 9),
-            ("Fingerprint Lab", 10),
-            ("Settings", 2),
+            ("Dashboard", PAGE_DASHBOARD, "⌂"),
+            ("All profiles", PAGE_PROFILES, "●"), ("Profiles", PAGE_PROFILES, "◎"),
+            ("Proxies", PAGE_PROXIES, "◉"),
+            ("Startup website", PAGE_STARTUP, "↗"),
+            ("Trash", PAGE_TRASH, "⌫"),
+            ("Backup & Restore", PAGE_BACKUP, "↻"),
+            ("Profile Health", PAGE_HEALTH, "✓"),
+            ("Activity Log", PAGE_ACTIVITY, "≡"),
+            ("Fingerprint Lab", PAGE_FINGERPRINT, "◇"),
+            ("Task center", PAGE_TASKS, "↯"),
+            ("Settings", PAGE_SETTINGS, "⚙"),
         ]
-        for row, (label, page_index) in enumerate(required_nav):
-            button = self._nav_button(label, page_index)
+        for row, (label, page_index, icon) in enumerate(required_nav):
+            button = self._nav_button(label, page_index, icon)
             if row == 0:
                 button.setChecked(True)
             layout.addWidget(button)
@@ -154,22 +204,72 @@ class MainWindow(QMainWindow):
         tools_label.setObjectName("sidebarSection")
         layout.addSpacing(16)
         layout.addWidget(tools_label)
-        layout.addWidget(self._nav_button("Extensions", 3))
-        layout.addWidget(self._nav_button("Bookmarks", 4))
+        layout.addWidget(self._nav_button("Extensions", PAGE_EXTENSIONS, "◆"))
+        layout.addWidget(self._nav_button("Bookmarks", PAGE_BOOKMARKS, "★"))
         layout.addStretch(1)
         footer = QLabel(f"Version {APP_VERSION}")
         footer.setObjectName("sidebarFooter")
         layout.addWidget(footer)
         return sidebar
 
-    def _nav_button(self, label: str, page_index: int) -> QPushButton:
+    def _nav_button(self, label: str, page_index: int, icon: str = "•") -> QPushButton:
         button = QPushButton(label)
         button.setObjectName("navButton")
         button.setCheckable(True)
         button.setMinimumHeight(40)
         button.clicked.connect(partial(self.pages.setCurrentIndex, page_index))
+        button.setProperty("fullLabel", label)
+        button.setProperty("navIcon", icon)
+        button.setProperty("pageIndex", page_index)
+        self._nav_buttons.append(button)
         self.nav_group.addButton(button)
         return button
+
+    def _build_dashboard_page(self) -> QWidget:
+        page = QWidget(); page.setObjectName("dashboardPage")
+        layout = QVBoxLayout(page); layout.setContentsMargins(28, 24, 28, 24); layout.setSpacing(16)
+        header = QHBoxLayout(); labels = QVBoxLayout()
+        title = QLabel("Dashboard"); title.setObjectName("pageTitle")
+        subtitle = QLabel("Profile, proxy and fingerprint health at a glance"); subtitle.setObjectName("pageSubtitle")
+        labels.addWidget(title); labels.addWidget(subtitle); header.addLayout(labels); header.addStretch(1)
+        create = QPushButton("+ Create profile"); create.setObjectName("primaryButton"); create.clicked.connect(self.create_profile)
+        check = QPushButton("Check all proxies"); check.clicked.connect(self.controller.check_all_proxies)
+        header.addWidget(check); header.addWidget(create); layout.addLayout(header)
+
+        cards = QGridLayout(); cards.setHorizontalSpacing(12); cards.setVerticalSpacing(12)
+        self.dashboard_profiles_value = self._dashboard_card(cards, 0, "Profiles", "0", "Total browser identities")
+        self.dashboard_running_value = self._dashboard_card(cards, 1, "Running", "0", "Active browser windows")
+        self.dashboard_proxy_value = self._dashboard_card(cards, 2, "Proxy pool", "0/0", "Live and enabled")
+        self.dashboard_health_value = self._dashboard_card(cards, 3, "Needs attention", "0", "Health or compatibility warnings")
+        layout.addLayout(cards)
+
+        quick = QFrame(); quick.setObjectName("settingsCard"); quick_layout = QHBoxLayout(quick); quick_layout.setContentsMargins(16, 14, 16, 14)
+        quick_layout.addWidget(QLabel("Quick actions"))
+        for label, callback in (
+            ("Create batch", self.create_profiles_batch), ("Use preset", self.create_from_preset),
+            ("Open profiles", partial(self.pages.setCurrentIndex, PAGE_PROFILES)),
+            ("Fingerprint Lab", partial(self.pages.setCurrentIndex, PAGE_FINGERPRINT)),
+        ):
+            button = QPushButton(label); button.clicked.connect(callback); quick_layout.addWidget(button)
+        quick_layout.addStretch(1); layout.addWidget(quick)
+
+        recent_title = QLabel("Recently used profiles"); recent_title.setObjectName("settingTitle"); layout.addWidget(recent_title)
+        self.dashboard_recent = self._data_table(["Name", "State", "Proxy", "Last used", ""])
+        recent_header = self.dashboard_recent.horizontalHeader()
+        recent_header.setSectionResizeMode(0, QHeaderView.Stretch); recent_header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        recent_header.setSectionResizeMode(2, QHeaderView.Stretch); recent_header.setSectionResizeMode(3, QHeaderView.ResizeToContents); recent_header.setSectionResizeMode(4, QHeaderView.Fixed); self.dashboard_recent.setColumnWidth(4, 74)
+        layout.addWidget(self.dashboard_recent, 1)
+        return page
+
+    @staticmethod
+    def _dashboard_card(grid: QGridLayout, column: int, title: str, value: str, subtitle: str) -> QLabel:
+        card = QFrame(); card.setObjectName("dashboardCard"); content = QVBoxLayout(card); content.setContentsMargins(18, 16, 18, 16); content.setSpacing(4)
+        title_label = QLabel(title); title_label.setObjectName("dashboardCardTitle")
+        value_label = QLabel(value); value_label.setObjectName("dashboardCardValue")
+        subtitle_label = QLabel(subtitle); subtitle_label.setObjectName("dashboardCardSubtitle")
+        content.addWidget(title_label); content.addWidget(value_label); content.addWidget(subtitle_label)
+        grid.addWidget(card, 0, column)
+        return value_label
 
     def _build_profiles_page(self) -> QWidget:
         page = QWidget()
@@ -203,6 +303,7 @@ class MainWindow(QMainWindow):
         create_menu = QMenu(create_button)
         create_menu.addAction("Create one profile", self.create_profile)
         create_menu.addAction("Create profiles in batch", self.create_profiles_batch)
+        create_menu.addAction("Create from preset", self.create_from_preset)
         create_button.setMenu(create_menu)
         more_button = QToolButton()
         more_button.setObjectName("toolbarMoreButton")
@@ -212,6 +313,8 @@ class MainWindow(QMainWindow):
         overflow = QMenu(more_button)
         overflow.addAction("Refresh profiles", self.controller.load_profiles)
         overflow.addAction("Create profiles in batch", self.create_profiles_batch)
+        overflow.addAction("Save selected as preset", self.save_selected_as_preset)
+        overflow.addAction("Manage profile presets", self.create_from_preset)
         overflow.addAction("Create sample profiles", self.create_sample_profiles)
         more_button.setMenu(overflow)
         self.profile_count = QLabel("0 profiles")
@@ -234,6 +337,10 @@ class MainWindow(QMainWindow):
         columns_button = QPushButton("Columns")
         columns_button.setObjectName("columnsButton")
         columns_button.clicked.connect(self.open_column_settings)
+        command_button = QPushButton("⌘")
+        command_button.setToolTip("Command palette · Ctrl+K")
+        command_button.setFixedWidth(38)
+        command_button.clicked.connect(self.open_command_palette)
 
         toolbar_layout.addWidget(self.search_input)
         toolbar_layout.addWidget(all_profiles)
@@ -242,6 +349,7 @@ class MainWindow(QMainWindow):
         toolbar_layout.addWidget(self.profile_count)
         toolbar_layout.addWidget(self.sort_input)
         toolbar_layout.addStretch(1)
+        toolbar_layout.addWidget(command_button)
         toolbar_layout.addWidget(columns_button)
         layout.addWidget(toolbar)
 
@@ -259,7 +367,14 @@ class MainWindow(QMainWindow):
         for label, value in (("All systems", ""), ("Windows 11", "windows"), ("macOS", "macos"), ("Linux", "linux")):
             self.os_filter.addItem(label, value)
         self.pinned_filter = QCheckBox("Pinned only")
+        self.saved_view_input = QComboBox(); self.saved_view_input.setMinimumWidth(150)
+        self.saved_view_input.currentIndexChanged.connect(self._apply_saved_view)
+        save_view = QPushButton("Save view"); save_view.clicked.connect(self.save_current_view)
+        delete_view = QPushButton("×"); delete_view.setToolTip("Delete selected view"); delete_view.setFixedWidth(34); delete_view.clicked.connect(self.delete_current_view)
         filter_layout.addWidget(QLabel("Filter"))
+        filter_layout.addWidget(self.saved_view_input)
+        filter_layout.addWidget(save_view)
+        filter_layout.addWidget(delete_view)
         filter_layout.addWidget(self.group_filter)
         filter_layout.addWidget(self.status_filter)
         filter_layout.addWidget(self.os_filter)
@@ -284,6 +399,8 @@ class MainWindow(QMainWindow):
         self.bulk_delete_button = QPushButton("Move to Trash")
         self.bulk_delete_button.setObjectName("bulkDeleteButton")
         self.bulk_delete_button.setEnabled(False)
+        self.bulk_edit_button = QPushButton("Bulk edit")
+        self.bulk_edit_button.setEnabled(False)
         create_batch_button = QPushButton("+ Create batch")
         create_batch_button.setObjectName("primaryButton")
         close_all_button = QPushButton("Close all")
@@ -293,6 +410,7 @@ class MainWindow(QMainWindow):
         bulk_layout.addWidget(self.selection_count)
         bulk_layout.addWidget(self.bulk_open_button)
         bulk_layout.addWidget(self.bulk_delete_button)
+        bulk_layout.addWidget(self.bulk_edit_button)
         bulk_layout.addWidget(close_all_button)
         bulk_layout.addStretch(1)
         bulk_layout.addWidget(create_batch_button)
@@ -307,11 +425,13 @@ class MainWindow(QMainWindow):
         self.select_all_checkbox.stateChanged.connect(self._toggle_all_profiles)
         self.bulk_open_button.clicked.connect(self.open_selected_profiles)
         self.bulk_delete_button.clicked.connect(self.delete_selected_profiles)
+        self.bulk_edit_button.clicked.connect(self.bulk_edit_selected_profiles)
         create_batch_button.clicked.connect(self.create_profiles_batch)
         self.group_filter.currentIndexChanged.connect(self._filter_profiles)
         self.status_filter.currentIndexChanged.connect(self._filter_profiles)
         self.os_filter.currentIndexChanged.connect(self._filter_profiles)
         self.pinned_filter.toggled.connect(self._filter_profiles)
+        self._load_saved_views()
         return page
 
     def _new_data_page(self, title: str, subtitle: str, action_text: str | None = None, action=None):
@@ -358,6 +478,16 @@ class MainWindow(QMainWindow):
         proxy_bar_layout = QHBoxLayout(proxy_bar)
         proxy_bar_layout.setContentsMargins(12, 8, 12, 8)
         proxy_bar_layout.addWidget(QLabel("Check connectivity, authentication and exit IP"))
+        self.proxy_pool_enabled = QCheckBox("Smart Pool")
+        self.proxy_pool_enabled.setChecked(self.config_store.proxy_pool_enabled())
+        self.proxy_pool_enabled.toggled.connect(self._save_proxy_pool_settings)
+        self.proxy_pool_interval = QComboBox()
+        for label, minutes in (("5 min", 5), ("15 min", 15), ("30 min", 30), ("1 hour", 60), ("3 hours", 180)):
+            self.proxy_pool_interval.addItem(label, minutes)
+        self.proxy_pool_interval.setCurrentIndex(max(0, self.proxy_pool_interval.findData(self.config_store.proxy_pool_interval_minutes())))
+        self.proxy_pool_interval.currentIndexChanged.connect(self._save_proxy_pool_settings)
+        proxy_bar_layout.addWidget(self.proxy_pool_enabled)
+        proxy_bar_layout.addWidget(self.proxy_pool_interval)
         proxy_bar_layout.addStretch(1)
         check_all_button = QPushButton("Check all proxies")
         check_all_button.setObjectName("proxyCheckButton")
@@ -366,12 +496,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(proxy_bar)
         self.proxies_table = self._data_table([
             "Name", "Type", "Address", "Location", "Notes", "Status",
-            "Exit IP / latency", "Last checked", "",
+            "Quality", "Pool", "Exit IP / latency", "Last checked", "",
         ])
         header = self.proxies_table.horizontalHeader()
-        for index in (0, 2, 3, 4, 6): header.setSectionResizeMode(index, QHeaderView.Stretch)
+        for index in (0, 2, 3, 4, 8): header.setSectionResizeMode(index, QHeaderView.Stretch)
         header.setSectionResizeMode(1, QHeaderView.Fixed); self.proxies_table.setColumnWidth(1, 100)
-        for index, width in ((5, 105), (7, 145), (8, 58)):
+        for index, width in ((5, 105), (6, 90), (7, 90), (9, 145), (10, 58)):
             header.setSectionResizeMode(index, QHeaderView.Fixed); self.proxies_table.setColumnWidth(index, width)
         layout.addWidget(self.proxies_table, 1)
         return page
@@ -409,6 +539,13 @@ class MainWindow(QMainWindow):
         search_value = QLabel("DuckDuckGo · applied safely to every browser profile")
         search_value.setWordWrap(True)
         card_layout.addWidget(search_value)
+        experience_row = QHBoxLayout()
+        welcome_button = QPushButton("Show welcome guide")
+        welcome_button.clicked.connect(self.show_onboarding_again)
+        shortcuts_button = QPushButton("Open command palette · Ctrl+K")
+        shortcuts_button.clicked.connect(self.open_command_palette)
+        experience_row.addWidget(welcome_button); experience_row.addWidget(shortcuts_button); experience_row.addStretch(1)
+        card_layout.addLayout(experience_row)
         layout.addWidget(card)
 
         update_card = QFrame(); update_card.setObjectName("settingsCard")
@@ -435,7 +572,7 @@ class MainWindow(QMainWindow):
         update_buttons = QHBoxLayout()
         self.check_app_update_button = QPushButton("Check for updates")
         self.check_app_update_button.clicked.connect(self.check_app_update)
-        self.install_app_update_button = QPushButton("Download update")
+        self.install_app_update_button = QPushButton("Update now")
         self.install_app_update_button.setObjectName("primaryButton")
         self.install_app_update_button.clicked.connect(self.download_or_install_app_update)
         self.install_app_update_button.hide()
@@ -454,6 +591,7 @@ class MainWindow(QMainWindow):
         self.check_app_update_button.setEnabled(False)
         self.install_app_update_button.hide()
         self.app_update_status.setText(tr("Checking GitHub for a newer version…"))
+        self.task_center.add_task("Check for app updates", "GitHub", "app-update-check")
         thread = UpdateCheckThread(self)
         thread.completed.connect(self._app_update_checked)
         thread.failed.connect(self._app_update_failed)
@@ -465,6 +603,7 @@ class MainWindow(QMainWindow):
     def _app_update_checked(self, info: AppUpdateInfo) -> None:
         self._available_app_update = info
         self._downloaded_app_update = None
+        self.task_center.finish_task("app-update-check", f"Latest: {info.version}")
         if not is_newer_version(info.version, APP_VERSION):
             self.app_update_status.setText(tr(
                 f"You are up to date · version {APP_VERSION} is the latest version"
@@ -475,11 +614,12 @@ class MainWindow(QMainWindow):
         self.app_update_status.setText(tr(
             f"Version {info.version} is available.{notes}"
         ))
-        self.install_app_update_button.setText(tr("Download update"))
+        self.install_app_update_button.setText(tr("Update now"))
         self.install_app_update_button.show()
 
     def _app_update_failed(self, message: str) -> None:
         self.app_update_status.setText(tr(f"Update check failed · {message}"))
+        self.task_center.fail_task("app-update-check", message)
         self.show_error(message)
 
     def _update_check_finished(self) -> None:
@@ -510,8 +650,11 @@ class MainWindow(QMainWindow):
         self.app_update_progress.setValue(0)
         self.app_update_progress.show()
         self.app_update_status.setText(tr(f"Downloading version {info.version}…"))
+        self._install_after_download = True
+        self.task_center.add_task("Download app update", f"Version {info.version}", "app-update-download")
         thread = UpdateDownloadThread(url, sha256, self)
         thread.progress.connect(self.app_update_progress.setValue)
+        thread.progress.connect(lambda value: self.task_center.update_task("app-update-download", progress=value))
         thread.completed.connect(self._app_update_downloaded)
         thread.failed.connect(self._app_update_download_failed)
         thread.finished.connect(self._update_download_finished)
@@ -521,13 +664,16 @@ class MainWindow(QMainWindow):
 
     def _app_update_downloaded(self, path: str) -> None:
         self._downloaded_app_update = Path(path)
+        self.task_center.finish_task("app-update-download", "Downloaded and SHA-256 verified")
         self.app_update_status.setText(tr(
-            "Update downloaded and verified. Click Install update to finish."
+            "Update downloaded and verified. Installing…"
         ))
         self.install_app_update_button.setText(tr("Install update"))
 
     def _app_update_download_failed(self, message: str) -> None:
+        self._install_after_download = False
         self.app_update_status.setText(tr(f"Update download failed · {message}"))
+        self.task_center.fail_task("app-update-download", message)
         self.show_error(message)
 
     def _update_download_finished(self) -> None:
@@ -535,6 +681,9 @@ class MainWindow(QMainWindow):
         self.check_app_update_button.setEnabled(True)
         self.install_app_update_button.setEnabled(True)
         self.app_update_progress.hide()
+        if self._install_after_download and self._downloaded_app_update:
+            self._install_after_download = False
+            QTimer.singleShot(150, self._install_downloaded_app_update)
 
     def _install_downloaded_app_update(self) -> None:
         if self._downloaded_app_update is None or not self._downloaded_app_update.is_file():
@@ -839,6 +988,7 @@ class MainWindow(QMainWindow):
         self.profile_table.metadata_updated.connect(self.update_profile_metadata)
         self.profile_table.health_requested.connect(self.controller.check_profile_health)
         self.profile_table.export_requested.connect(self.export_profile_by_id)
+        self.profile_table.compatibility_requested.connect(self.show_compatibility_report)
         self.controller.profiles_changed.connect(self.populate_profiles)
         self.controller.proxies_changed.connect(self.populate_proxies)
         self.controller.extensions_changed.connect(self.populate_extensions)
@@ -850,10 +1000,14 @@ class MainWindow(QMainWindow):
         self.controller.restore_completed.connect(self._restore_completed)
         self.controller.fingerprint_changed.connect(self.populate_fingerprint_lab)
         self.controller.cloak_versions_changed.connect(self.populate_cloak_versions)
+        self.controller.task_started.connect(self._task_started)
+        self.controller.task_progress.connect(self._task_progress)
+        self.controller.task_finished.connect(self._task_finished)
         self.controller.operation_failed.connect(self.show_error)
         self.controller.info_message.connect(self.show_status)
         self.profile_editor.save_requested.connect(self._save_profile_editor)
         self.profile_editor.cancel_requested.connect(self._close_profile_editor)
+        self._install_shortcuts()
 
     def _load_data(self) -> None:
         self.controller.load_proxies()
@@ -864,6 +1018,7 @@ class MainWindow(QMainWindow):
         self.controller.load_health()
         self.controller.load_fingerprint_lab()
         self.controller.load_profiles()
+        QTimer.singleShot(350, self._maybe_show_onboarding)
 
     def populate_profiles(self, profiles: list[Profile]) -> None:
         self.profiles = profiles
@@ -875,6 +1030,7 @@ class MainWindow(QMainWindow):
         self.group_filter.setCurrentIndex(max(0, self.group_filter.findData(current_group)))
         del blocker
         self._filter_profiles()
+        self._refresh_dashboard()
         translate_tree(self.profile_table)
 
     def _filter_profiles(self) -> None:
@@ -975,6 +1131,189 @@ class MainWindow(QMainWindow):
         except Exception as error:
             self.show_error(str(error))
 
+    def _maybe_show_onboarding(self) -> None:
+        if self.config_store.onboarding_completed():
+            return
+        dialog = OnboardingDialog(
+            self.config_store.language(), self.config_store.default_startup_url(),
+            bool(self.profiles), self,
+        )
+        if dialog.exec() == OnboardingDialog.Accepted:
+            payload = dialog.payload()
+            try:
+                startup = normalize_startup_url(str(payload["startup_url"] or ""))
+            except ValueError as error:
+                self.show_error(str(error)); startup = ""
+            self.config_store.set_default_startup_url(startup)
+            language = str(payload["language"])
+            self.config_store.set_language(language); set_language(language); translate_tree(self)
+            if payload.get("create_sample") and not self.profiles:
+                self.controller.create_profile(
+                    "Welcome Profile", None, "Asia/Bangkok", "en-US", 1200, 800,
+                    platform="windows", notes="Sample · ready to customize",
+                )
+        self.config_store.set_onboarding_completed(True)
+        self._refresh_default_startup_status()
+
+    def show_onboarding_again(self) -> None:
+        self.config_store.set_onboarding_completed(False)
+        self._maybe_show_onboarding()
+
+    def save_selected_as_preset(self) -> None:
+        if len(self._selected_profile_ids) != 1:
+            self.show_status("Select exactly one profile to save as a preset")
+            return
+        profile = self.controller.get_profile(self._selected_profile_ids[0])
+        if not profile:
+            return
+        name, accepted = QInputDialog.getText(self, tr("Save profile preset"), tr("Preset name"), text=profile.name)
+        if not accepted or not name.strip():
+            return
+        preset = {
+            "name": name.strip(), "proxy": profile.proxy or "", "timezone": profile.timezone,
+            "locale": profile.locale, "screen_width": profile.screen_width,
+            "screen_height": profile.screen_height, "auto_geoip": profile.auto_geoip,
+            "platform": profile.platform, "browser_engine": profile.browser_engine,
+            "notes": profile.notes, "user_agent": profile.user_agent,
+            "startup_url": profile.startup_url, "group_name": profile.group_name,
+            "tags": profile.tags, "extension_ids": profile.extension_ids,
+            "bookmark_ids": profile.bookmark_ids,
+        }
+        presets = [item for item in self.config_store.profile_presets() if str(item.get("name", "")).casefold() != name.strip().casefold()]
+        presets.append(preset); self.config_store.set_profile_presets(presets)
+        self.show_status(f"Saved preset {name.strip()}")
+
+    def create_from_preset(self) -> None:
+        presets = self.config_store.profile_presets()
+        if not presets:
+            self.show_status("No presets yet · select one profile and choose Save selected as preset")
+            return
+        dialog = PresetChoiceDialog(presets, self)
+        result = dialog.exec()
+        self.config_store.set_profile_presets(dialog.presets)
+        if result != PresetChoiceDialog.Accepted or not dialog.selected:
+            return
+        preset = dict(dialog.selected)
+        base_name = str(preset.pop("name", "Preset Profile"))
+        existing = {profile.name.casefold() for profile in self.profiles}
+        name = base_name; counter = 2
+        while name.casefold() in existing:
+            name = f"{base_name} {counter:02d}"; counter += 1
+        try:
+            self.controller.create_profile(name=name, **preset)
+        except Exception as error:
+            self.show_error(str(error))
+
+    def bulk_edit_selected_profiles(self) -> None:
+        if not self._selected_profile_ids:
+            return
+        dialog = BulkEditDialog(len(self._selected_profile_ids), self.proxies, self.extensions, self.bookmarks, self)
+        if dialog.exec() != BulkEditDialog.Accepted:
+            return
+        try:
+            snapshots = self.controller.bulk_update_profiles(self._selected_profile_ids, dialog.payload())
+            self._push_undo("Undo bulk profile edit", partial(self.controller.restore_profile_snapshots, snapshots))
+            self.profile_table.clear_checked()
+        except Exception as error:
+            self.show_error(str(error))
+
+    def _push_undo(self, label: str, callback) -> None:
+        self._undo_stack.append((label, callback)); self._undo_stack = self._undo_stack[-20:]
+        self.undo_button.setText(tr(label)); self.undo_button.show()
+        QTimer.singleShot(15000, self._hide_undo_if_same)
+
+    def _hide_undo_if_same(self) -> None:
+        if self._undo_stack:
+            self.undo_button.hide()
+
+    def _undo_last_action(self) -> None:
+        if not self._undo_stack:
+            self.undo_button.hide(); return
+        _label, callback = self._undo_stack.pop()
+        try:
+            callback()
+            self.show_status("Last action was undone")
+        except Exception as error:
+            self.show_error(str(error))
+        self.undo_button.setVisible(bool(self._undo_stack))
+
+    def _load_saved_views(self) -> None:
+        blocker = QSignalBlocker(self.saved_view_input)
+        self.saved_view_input.clear(); self.saved_view_input.addItem("All profiles", "")
+        for index, view in enumerate(self.config_store.saved_views()):
+            self.saved_view_input.addItem(str(view.get("name") or f"View {index + 1}"), index)
+        del blocker
+
+    def save_current_view(self) -> None:
+        name, accepted = QInputDialog.getText(self, tr("Save current view"), tr("View name"))
+        if not accepted or not name.strip():
+            return
+        view = {
+            "name": name.strip(), "query": self.search_input.text(),
+            "group": str(self.group_filter.currentData() or ""),
+            "status": str(self.status_filter.currentData() or ""),
+            "platform": str(self.os_filter.currentData() or ""),
+            "pinned": self.pinned_filter.isChecked(),
+            "sort": str(self.sort_input.currentData() or "created_desc"),
+            "columns": [spec.key for index, spec in enumerate(PROFILE_COLUMNS) if not self.profile_table.isColumnHidden(index)],
+        }
+        views = [item for item in self.config_store.saved_views() if str(item.get("name", "")).casefold() != name.strip().casefold()]
+        views.append(view); self.config_store.set_saved_views(views); self._load_saved_views()
+        self.saved_view_input.setCurrentIndex(self.saved_view_input.count() - 1)
+
+    def delete_current_view(self) -> None:
+        index = self.saved_view_input.currentData()
+        if index in (None, ""):
+            return
+        views = self.config_store.saved_views()
+        if 0 <= int(index) < len(views):
+            views.pop(int(index)); self.config_store.set_saved_views(views); self._load_saved_views(); self._filter_profiles()
+
+    def _apply_saved_view(self, *_args) -> None:
+        if not hasattr(self, "saved_view_input"):
+            return
+        index = self.saved_view_input.currentData()
+        if index in (None, ""):
+            return
+        views = self.config_store.saved_views()
+        if not 0 <= int(index) < len(views):
+            return
+        view = views[int(index)]
+        blockers = [QSignalBlocker(widget) for widget in (self.search_input, self.group_filter, self.status_filter, self.os_filter, self.pinned_filter, self.sort_input)]
+        self.search_input.setText(str(view.get("query") or ""))
+        self.group_filter.setCurrentIndex(max(0, self.group_filter.findData(str(view.get("group") or ""))))
+        self.status_filter.setCurrentIndex(max(0, self.status_filter.findData(str(view.get("status") or ""))))
+        self.os_filter.setCurrentIndex(max(0, self.os_filter.findData(str(view.get("platform") or ""))))
+        self.pinned_filter.setChecked(bool(view.get("pinned")))
+        self.sort_input.setCurrentIndex(max(0, self.sort_input.findData(str(view.get("sort") or "created_desc"))))
+        del blockers
+        columns = view.get("columns")
+        if isinstance(columns, list): self.profile_table.set_visible_columns([str(item) for item in columns])
+        self.config_store.set_profile_sort(str(view.get("sort") or "created_desc")); self._filter_profiles()
+
+    def open_command_palette(self) -> None:
+        commands = [
+            ("create", "Create profile", "Ctrl+N"), ("batch", "Create batch", "Ctrl+Shift+N"),
+            ("find", "Search profiles", "Ctrl+F"), ("run", "Run selected profiles", "Ctrl+Enter"),
+            ("edit", "Bulk edit selected", "Ctrl+Shift+B"), ("proxy", "Check all proxies", ""),
+            ("dashboard", "Open Dashboard", "Ctrl+1"), ("profiles", "Open Profiles", "Ctrl+2"),
+            ("fingerprint", "Open Fingerprint Lab", ""), ("undo", "Undo", "Ctrl+Z"),
+        ]
+        dialog = CommandPaletteDialog(commands, self)
+        if dialog.exec() != CommandPaletteDialog.Accepted:
+            return
+        actions = {
+            "create": self.create_profile, "batch": self.create_profiles_batch,
+            "find": self.focus_profile_search, "run": self.open_selected_profiles,
+            "edit": self.bulk_edit_selected_profiles, "proxy": self.controller.check_all_proxies,
+            "dashboard": partial(self.pages.setCurrentIndex, PAGE_DASHBOARD),
+            "profiles": partial(self.pages.setCurrentIndex, PAGE_PROFILES),
+            "fingerprint": partial(self.pages.setCurrentIndex, PAGE_FINGERPRINT),
+            "undo": self._undo_last_action,
+        }
+        action = actions.get(dialog.command_key)
+        if action: action()
+
     def _toggle_all_profiles(self, state: int) -> None:
         # A user click may briefly enter the partial state on a tri-state box;
         # treat every non-empty state as "select all" and then normalize it.
@@ -986,6 +1325,7 @@ class MainWindow(QMainWindow):
         self.selection_count.setText(tr(f"{count} selected"))
         self.bulk_open_button.setEnabled(count > 0)
         self.bulk_delete_button.setEnabled(count > 0)
+        self.bulk_edit_button.setEnabled(count > 0)
 
         blocker = QSignalBlocker(self.select_all_checkbox)
         if count == 0:
@@ -1122,6 +1462,21 @@ class MainWindow(QMainWindow):
         try: self.controller.close_profile(profile_id)
         except Exception as error: self.show_error(str(error))
 
+    def show_compatibility_report(self, profile_id: str) -> None:
+        try:
+            report = self.controller.profile_compatibility(profile_id)
+        except Exception as error:
+            self.show_error(str(error)); return
+        profile = self.controller.get_profile(profile_id)
+        lines = [f"{profile.name if profile else 'Profile'} · {report.score}/100 · {report.status.title()}"]
+        if report.issues:
+            for item in report.issues:
+                fix = f"\nFix: {item.fix}" if item.fix else ""
+                lines.append(f"\n{'BLOCK' if item.severity == 'blocker' else 'WARN'} · {item.title}\n{item.detail}{fix}")
+        else:
+            lines.append("\nAll compatibility checks passed.")
+        QMessageBox.information(self, tr("Fingerprint Compatibility Guard"), "\n".join(lines))
+
     def clone_profile_by_id(self, profile_id: str) -> None:
         try: self.controller.clone_profile(profile_id)
         except Exception as error: self.show_error(str(error))
@@ -1231,19 +1586,13 @@ class MainWindow(QMainWindow):
 
     def _offer_trash_undo(self, profile_ids: list[str]) -> None:
         self._last_trashed_ids = list(profile_ids)
-        if not hasattr(self, "undo_trash_button"):
-            self.undo_trash_button = QPushButton("Undo delete")
-            self.undo_trash_button.clicked.connect(self._undo_last_trash)
-            self.statusBar().addPermanentWidget(self.undo_trash_button)
-        self.undo_trash_button.show()
-        QTimer.singleShot(10000, self.undo_trash_button.hide)
+        self._push_undo("Undo delete", self._undo_last_trash)
 
     def _undo_last_trash(self) -> None:
         for profile_id in self._last_trashed_ids:
             try: self.controller.restore_profile(profile_id)
             except Exception: pass
         self._last_trashed_ids = []
-        self.undo_trash_button.hide()
 
     def restore_profile(self, profile: Profile) -> None:
         try:
@@ -1565,9 +1914,10 @@ class MainWindow(QMainWindow):
                 if record.status == "live" else (f"{record.latency_ms} ms" if record.latency_ms else "—")
             )
             checked_text = record.last_checked_at.replace("T", " ")[:16] if record.last_checked_at else "—"
+            pool_text = "Enabled" if record.enabled else "Cooldown"
             values = (
                 record.name, record.proxy_type, address, record.location, record.notes,
-                status_text, result_text, checked_text,
+                status_text, f"{record.quality_score}/100", pool_text, result_text, checked_text,
             )
             for col, value in enumerate(values):
                 self._set_item(self.proxies_table, row, col, value, col == 0)
@@ -1576,11 +1926,13 @@ class MainWindow(QMainWindow):
             status_item = self.proxies_table.item(row, 5)
             status_item.setForeground(QColor({"live": "#0d8f78", "dead": "#c2414b", "checking": "#d97706"}.get(record.status, "#6b7280")))
             status_item.setToolTip(record.check_error or status_text)
-            self.proxies_table.setCellWidget(row, 8, self._menu_button([
+            self.proxies_table.setCellWidget(row, 10, self._menu_button([
                 ("Check proxy", partial(self.controller.check_proxy, record.id)),
+                ("Disable in pool" if record.enabled else "Enable in pool", partial(self.controller.set_proxy_enabled, record.id, not record.enabled)),
                 ("Edit", partial(self.edit_proxy, record)), ("---", None),
                 ("Delete", partial(self.delete_proxy, record)),
             ]))
+        self._refresh_dashboard()
         translate_tree(self.proxies_table)
 
     def add_proxy(self) -> None: self.edit_proxy(None)
@@ -1654,6 +2006,106 @@ class MainWindow(QMainWindow):
     def delete_bookmark(self, record: BookmarkRecord) -> None:
         if QMessageBox.question(self, "Delete bookmark", f"Delete {record.title}?", QMessageBox.Yes | QMessageBox.No) == QMessageBox.Yes:
             self.controller.delete_bookmark(record.id)
+
+    def _refresh_dashboard(self) -> None:
+        if not hasattr(self, "dashboard_profiles_value"):
+            return
+        running = sum(profile.status in {"running", "starting", "checking"} for profile in self.profiles)
+        available = sum(proxy.enabled and proxy.status == "live" for proxy in self.proxies)
+        attention = sum(profile.health_status in {"warning", "fail"} for profile in self.profiles)
+        self.dashboard_profiles_value.setText(str(len(self.profiles)))
+        self.dashboard_running_value.setText(str(running))
+        self.dashboard_proxy_value.setText(f"{available}/{len(self.proxies)}")
+        self.dashboard_health_value.setText(str(attention))
+        recent = sorted(self.profiles, key=lambda profile: profile.last_used_at or profile.created_at or "", reverse=True)[:7]
+        self.dashboard_recent.setRowCount(len(recent))
+        proxy_by_url = {proxy.url: proxy for proxy in self.proxies}
+        for row, profile in enumerate(recent):
+            proxy = proxy_by_url.get(profile.proxy or "")
+            values = (
+                profile.name, profile.status,
+                proxy.name if proxy else ("No proxy" if not profile.proxy else "Custom proxy"),
+                (profile.last_used_at or "Never").replace("T", " ")[:16],
+            )
+            for column, value in enumerate(values): self._set_item(self.dashboard_recent, row, column, value, column == 0)
+            self.dashboard_recent.setCellWidget(row, 4, self._menu_button([("Open", partial(self.open_profile_by_id, profile.id)), ("Edit", partial(self.edit_profile_by_id, profile.id))]))
+
+    def _save_proxy_pool_settings(self, *_args) -> None:
+        if not hasattr(self, "proxy_pool_enabled"):
+            return
+        self.config_store.set_proxy_pool_enabled(self.proxy_pool_enabled.isChecked())
+        self.config_store.set_proxy_pool_interval_minutes(int(self.proxy_pool_interval.currentData() or 30))
+        self.show_status("Smart Proxy Pool settings saved")
+
+    def _task_started(self, task_id: str, title: str, detail: str) -> None:
+        self.task_center.add_task(title, detail, task_id)
+
+    def _task_progress(self, task_id: str, progress: int, detail: str) -> None:
+        self.task_center.update_task(task_id, progress=progress, detail=detail)
+
+    def _task_finished(self, task_id: str, success: bool, detail: str) -> None:
+        if success: self.task_center.finish_task(task_id, detail)
+        else: self.task_center.fail_task(task_id, detail)
+
+    def _install_shortcuts(self) -> None:
+        self._shortcuts = []
+        for sequence, callback in (
+            ("Ctrl+N", self.create_profile), ("Ctrl+Shift+N", self.create_profiles_batch),
+            ("Ctrl+F", self.focus_profile_search), ("Ctrl+K", self.open_command_palette),
+            ("Ctrl+Enter", self.open_selected_profiles), ("Ctrl+Shift+B", self.bulk_edit_selected_profiles),
+            ("Ctrl+Z", self._undo_last_action), ("Ctrl+1", partial(self.pages.setCurrentIndex, PAGE_DASHBOARD)),
+            ("Ctrl+2", partial(self.pages.setCurrentIndex, PAGE_PROFILES)),
+        ):
+            shortcut = QShortcut(QKeySequence(sequence), self); shortcut.activated.connect(callback); self._shortcuts.append(shortcut)
+        for sequence, callback in (("Delete", self.delete_selected_profiles), ("F2", self.rename_current_profile)):
+            shortcut = QShortcut(QKeySequence(sequence), self.profile_table)
+            shortcut.setContext(Qt.WidgetWithChildrenShortcut); shortcut.activated.connect(callback); self._shortcuts.append(shortcut)
+
+    def focus_profile_search(self) -> None:
+        self.pages.setCurrentIndex(PAGE_PROFILES); self.search_input.setFocus(); self.search_input.selectAll()
+
+    def rename_current_profile(self) -> None:
+        row = self.profile_table.currentRow()
+        if row < 0 or row >= len(self.profile_table.profiles):
+            return
+        profile = self.profile_table.profiles[row]
+        name, accepted = QInputDialog.getText(self, tr("Rename profile"), tr("Profile name"), text=profile.name)
+        if accepted and name.strip(): self.rename_profile(profile.id, name.strip())
+
+    def _page_changed(self, page: int) -> None:
+        if page != PAGE_EDITOR:
+            self.config_store.set_last_page(page)
+        self._sync_nav_selection(page)
+        if page == PAGE_DASHBOARD: self._refresh_dashboard()
+
+    def _sync_nav_selection(self, page: int) -> None:
+        matched = False
+        for button in self._nav_buttons:
+            should_check = not matched and int(button.property("pageIndex")) == page
+            button.setChecked(should_check)
+            matched = matched or should_check
+
+    def toggle_sidebar(self) -> None:
+        self._set_sidebar_collapsed(not self._sidebar_collapsed)
+
+    def _set_sidebar_collapsed(self, collapsed: bool, persist: bool = True) -> None:
+        if not hasattr(self, "sidebar"):
+            return
+        self._sidebar_collapsed = bool(collapsed)
+        self.sidebar.setFixedWidth(74 if collapsed else 220)
+        self.brand_labels_widget.setVisible(not collapsed)
+        self.sidebar_toggle.setText("›" if collapsed else "‹")
+        self.sidebar_toggle.setToolTip("Expand sidebar" if collapsed else "Collapse sidebar")
+        for button in self._nav_buttons:
+            label = str(button.property("fullLabel")); icon = str(button.property("navIcon"))
+            button.setText(icon if collapsed else label); button.setToolTip(label if collapsed else "")
+            button.setStyleSheet("text-align: center;" if collapsed else "")
+        if persist: self.config_store.set_sidebar_collapsed(collapsed)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        if hasattr(self, "sidebar") and self.width() < 1180 and not self._sidebar_collapsed:
+            self._set_sidebar_collapsed(True, persist=False)
 
     def show_error(self, message: str) -> None:
         message = tr(message)

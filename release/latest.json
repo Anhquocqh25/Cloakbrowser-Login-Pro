@@ -1,8 +1,8 @@
 {
-  "version": "0.1.0",
-  "notes": "DuckDuckGo mặc định bằng extension đơn nhiệm và cập nhật ứng dụng trực tiếp từ GitHub.",
-  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/raw/main/release/CloakBrowser-Login-0.1.0-Windows.zip",
-  "portable_sha256": "698ed4db6826cc6b11ab0b685b73d69c3456734253467740a8fac2be67cc703a",
-  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/raw/main/release/CloakBrowser-Login-Pro-Setup-0.1.0-Windows.exe",
-  "installer_sha256": "8e5f87737468622c1d7d23b7ea50d2d61445cccec5c8f84de2e9f3fc7755b491"
+  "version": "0.1.1",
+  "notes": "Dashboard, onboarding, profile presets, bulk edit with Undo, Saved Views, Task Center, adaptive sidebar, command palette, Fingerprint Compatibility Guard, Smart Proxy Pool and standard in-app updates.",
+  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.1/CloakBrowser-Login-0.1.1-Windows.zip",
+  "portable_sha256": "045d4d3545a7824f63cd23bbcf77164cf59e66685759a0678bec8b205a1f4919",
+  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.1/CloakBrowser-Login-Pro-Setup-0.1.1-Windows.exe",
+  "installer_sha256": "f3441643cfa0f647365d253a1050501bccd51c1d6c43f09688a87ee463c4f128"
 }

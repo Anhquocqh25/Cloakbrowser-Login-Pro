@@ -1,8 +1,18 @@
+param(
+    [string]$ReleaseRoot = ""
+)
+
 $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$AppSourceDir = Join-Path (Split-Path -Parent $ProjectDir) "release\CloakBrowser Login 0.1.0"
-$OutputDir = Join-Path (Split-Path -Parent $ProjectDir) "release"
+$ConfigText = Get-Content -LiteralPath (Join-Path $ProjectDir "config.py") -Raw
+$VersionMatch = [regex]::Match($ConfigText, 'APP_VERSION\s*=\s*"([^"]+)"')
+if (-not $VersionMatch.Success) { throw "Could not read APP_VERSION from config.py" }
+$Version = $VersionMatch.Groups[1].Value
+if (-not $ReleaseRoot) { $ReleaseRoot = Join-Path (Split-Path -Parent $ProjectDir) "release" }
+$ReleaseRoot = [System.IO.Path]::GetFullPath($ReleaseRoot)
+$AppSourceDir = Join-Path $ReleaseRoot "CloakBrowser Login $Version"
+$OutputDir = $ReleaseRoot
 $Script = Join-Path $ProjectDir "installer\cloakbrowser-login-pro.iss"
 
 $Candidates = @(
@@ -22,12 +32,12 @@ if (-not (Test-Path -LiteralPath $AppSourceDir)) {
 
 New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
 
-& $ISCC "/DAppSourceDir=$AppSourceDir" "/DOutputDir=$OutputDir" $Script
+& $ISCC "/DMyAppVersion=$Version" "/DAppSourceDir=$AppSourceDir" "/DOutputDir=$OutputDir" $Script
 if ($LASTEXITCODE -ne 0) {
     throw "Installer build failed with exit code $LASTEXITCODE."
 }
 
-$Setup = Join-Path $OutputDir "CloakBrowser-Login-Pro-Setup-0.1.0-Windows.exe"
+$Setup = Join-Path $OutputDir "CloakBrowser-Login-Pro-Setup-$Version-Windows.exe"
 if (-not (Test-Path -LiteralPath $Setup)) {
     throw "Installer finished but the output file was not found: $Setup"
 }

@@ -53,6 +53,12 @@ CREATE TABLE IF NOT EXISTS proxies (
     check_error TEXT DEFAULT ''
     ,country_code TEXT DEFAULT ''
     ,geo_timezone TEXT DEFAULT ''
+    ,enabled INTEGER DEFAULT 1
+    ,success_count INTEGER DEFAULT 0
+    ,failure_count INTEGER DEFAULT 0
+    ,consecutive_failures INTEGER DEFAULT 0
+    ,quality_score INTEGER DEFAULT 0
+    ,cooldown_until TEXT DEFAULT ''
 )
 """
 
@@ -183,6 +189,16 @@ def initialize_database() -> None:
             connection.execute("ALTER TABLE proxies ADD COLUMN country_code TEXT DEFAULT ''")
         if "geo_timezone" not in proxy_columns:
             connection.execute("ALTER TABLE proxies ADD COLUMN geo_timezone TEXT DEFAULT ''")
+        for name, sql_type, default in (
+            ("enabled", "INTEGER", "1"),
+            ("success_count", "INTEGER", "0"),
+            ("failure_count", "INTEGER", "0"),
+            ("consecutive_failures", "INTEGER", "0"),
+            ("quality_score", "INTEGER", "0"),
+            ("cooldown_until", "TEXT", "''"),
+        ):
+            if name not in proxy_columns:
+                connection.execute(f"ALTER TABLE proxies ADD COLUMN {name} {sql_type} DEFAULT {default}")
         for bookmark_id, title, url, folder in DEFAULT_BOOKMARKS:
             connection.execute(
                 "INSERT OR IGNORE INTO bookmarks (id, title, url, folder, created_at) VALUES (?, ?, ?, ?, '')",

@@ -1,11 +1,13 @@
 #define MyAppName "CloakBrowser Login Pro"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+#define MyAppVersion "0.1.1"
+#endif
 #define MyAppPublisher "Anhquocqh25"
 #define MyAppURL "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro"
 #define MyAppExeName "CloakBrowser Login.exe"
 
 #ifndef AppSourceDir
-#define AppSourceDir "..\release\CloakBrowser Login 0.1.0"
+#define AppSourceDir "..\release\CloakBrowser Login 0.1.1"
 #endif
 
 #ifndef OutputDir

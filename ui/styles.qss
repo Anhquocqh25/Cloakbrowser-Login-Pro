@@ -16,6 +16,7 @@ QLabel#brandCaption { color: #9ca3af; font-size: 12px; }
 QLabel#brandLogo { background-color: transparent; }
 QLabel#sidebarSection { color: #9ca3af; font-size: 11px; font-weight: 600; padding: 6px 10px; }
 QLabel#sidebarFooter { color: #9ca3af; font-size: 11px; padding: 8px 10px; }
+QToolButton#sidebarToggle { border: none; background: transparent; color: #6b7280; font-size: 18px; padding: 2px; }
 QPushButton#navButton {
     background-color: transparent;
     border: none;
@@ -28,6 +29,15 @@ QPushButton#navButton {
 QPushButton#navButton:hover { background-color: #f3f4f6; color: #111827; }
 QPushButton#navButton:checked { background-color: #e8f8f4; color: #128a74; font-weight: 600; }
 QStackedWidget#mainPages { background-color: #f7f8fa; }
+QFrame#dashboardCard {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+}
+QLabel#dashboardCardTitle { color: #6b7280; font-size: 12px; }
+QLabel#dashboardCardValue { color: #111827; font-size: 27px; font-weight: 700; }
+QLabel#dashboardCardSubtitle { color: #9ca3af; font-size: 11px; }
+QLabel#onboardingCheck { color: #176f60; background-color: #edf8f5; border-radius: 7px; padding: 10px; }
 
 QFrame#profilesToolbar {
     background-color: #ffffff;
@@ -135,6 +145,8 @@ QTableWidget#profileTable, QTableWidget#dataTable {
     selection-color: #111827;
     outline: none;
 }
+QTableWidget#profileTable QWidget#qt_scrollarea_viewport,
+QTableWidget#dataTable QWidget#qt_scrollarea_viewport { background-color: #ffffff; }
 QTableWidget#profileTable::item, QTableWidget#dataTable::item {
     background-color: #ffffff;
     border-bottom: 1px solid #e5e7eb;

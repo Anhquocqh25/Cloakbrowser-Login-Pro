@@ -20,6 +20,12 @@ class ProxyRecord:
     check_error: str = ""
     country_code: str = ""
     timezone: str = ""
+    enabled: bool = True
+    success_count: int = 0
+    failure_count: int = 0
+    consecutive_failures: int = 0
+    quality_score: int = 0
+    cooldown_until: str = ""
 
     @property
     def proxy_type(self) -> str:
@@ -36,4 +42,9 @@ class ProxyRecord:
             exit_ip=row["exit_ip"], last_checked_at=row["last_checked_at"],
             check_error=row["check_error"],
             country_code=stored_code, timezone=row["geo_timezone"],
+            enabled=bool(row["enabled"]), success_count=int(row["success_count"] or 0),
+            failure_count=int(row["failure_count"] or 0),
+            consecutive_failures=int(row["consecutive_failures"] or 0),
+            quality_score=int(row["quality_score"] or 0),
+            cooldown_until=row["cooldown_until"] or "",
         )

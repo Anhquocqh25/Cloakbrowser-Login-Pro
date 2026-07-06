@@ -39,6 +39,7 @@ from services.fingerprint_engine import (
     check_consistency, compare_snapshots, detect_duplicates, fingerprint_hash,
     regression_status, snapshot_data,
 )
+from services.compatibility_guard import blocker_message, check_profile_compatibility
 
 try:
     from cloakbrowser import __version__ as cloak_wrapper_version
@@ -178,6 +179,9 @@ class ProfileController(QObject):
     restore_completed = Signal()
     fingerprint_changed = Signal(dict)
     cloak_versions_changed = Signal(dict)
+    task_started = Signal(str, str, str)
+    task_progress = Signal(str, int, str)
+    task_finished = Signal(str, bool, str)
 
     def __init__(
         self,
@@ -206,6 +210,8 @@ class ProfileController(QObject):
         self.health_workers: dict[str, ProfileHealthWorker] = {}
         self.maintenance_threads: dict[str, QThread] = {}
         self.maintenance_workers: dict[str, MaintenanceWorker] = {}
+        self.proxy_batch_ids: set[str] = set()
+        self.proxy_batch_total = 0
         self.trash_cleanup_timer = QTimer(self)
         self.trash_cleanup_timer.setInterval(60 * 60 * 1000)
         self.trash_cleanup_timer.timeout.connect(self.purge_expired_profiles)
@@ -218,8 +224,13 @@ class ProfileController(QObject):
         self.backup_timer.setInterval(60 * 60 * 1000)
         self.backup_timer.timeout.connect(self.run_automatic_backup_if_due)
         self.backup_timer.start()
+        self.proxy_pool_timer = QTimer(self)
+        self.proxy_pool_timer.setInterval(60 * 1000)
+        self.proxy_pool_timer.timeout.connect(self.run_proxy_pool_cycle)
+        self.proxy_pool_timer.start()
         self.purge_expired_profiles()
         QTimer.singleShot(5000, self.run_automatic_backup_if_due)
+        QTimer.singleShot(15000, self.run_proxy_pool_cycle)
 
     def _log(self, action: str, profile: Profile | None = None, severity: str = "info", details: str = "") -> None:
         self.maintenance_repository.log(
@@ -430,6 +441,12 @@ class ProfileController(QObject):
             check_error=existing.check_error if keep_result else "",
             country_code=existing.country_code if keep_result else "",
             timezone=existing.timezone if keep_result else "",
+            enabled=existing.enabled if keep_result else True,
+            success_count=existing.success_count if keep_result else 0,
+            failure_count=existing.failure_count if keep_result else 0,
+            consecutive_failures=existing.consecutive_failures if keep_result else 0,
+            quality_score=existing.quality_score if keep_result else 0,
+            cooldown_until=existing.cooldown_until if keep_result else "",
         )
         self.proxy_repository.save(record)
         if existing and existing.url != clean_url:
@@ -477,9 +494,51 @@ class ProfileController(QObject):
         if not records:
             self.info_message.emit("No proxies to check")
             return
+        self.proxy_batch_ids = {record.id for record in records}
+        self.proxy_batch_total = len(records)
+        self.task_started.emit("proxy-pool-check", "Checking proxy pool", f"{len(records)} proxy(s)")
         for record in records:
             self.check_proxy(record.id)
         self.info_message.emit(f"Checking {len(records)} proxy(s)...")
+
+    def run_proxy_pool_cycle(self) -> None:
+        if not self.config_store.proxy_pool_enabled():
+            return
+        cutoff = (datetime.utcnow() - timedelta(minutes=self.config_store.proxy_pool_interval_minutes())).isoformat(timespec="seconds")
+        due = [
+            item for item in self.proxy_repository.due_for_check(cutoff)
+            if f"proxy:{item.id}" not in self.proxy_check_threads
+        ][:10]
+        if not due:
+            return
+        self.proxy_batch_ids.update(item.id for item in due)
+        self.proxy_batch_total = max(self.proxy_batch_total, len(self.proxy_batch_ids))
+        self.task_started.emit("proxy-pool-check", "Smart Proxy Pool health check", f"{len(due)} due")
+        for record in due:
+            self.check_proxy(record.id)
+
+    def best_proxy(self, country_code: str = "") -> ProxyRecord | None:
+        return self.proxy_repository.best_available(country_code)
+
+    def set_proxy_enabled(self, proxy_id: str, enabled: bool) -> None:
+        self.proxy_repository.set_enabled(proxy_id, enabled)
+        self.load_proxies()
+        record = self.proxy_repository.get(proxy_id)
+        self._log("proxy.enabled" if enabled else "proxy.disabled", details=record.name if record else proxy_id)
+
+    def _update_proxy_batch_task(self, proxy_id: str) -> None:
+        if proxy_id not in self.proxy_batch_ids:
+            return
+        self.proxy_batch_ids.discard(proxy_id)
+        completed = max(0, self.proxy_batch_total - len(self.proxy_batch_ids))
+        progress = round(completed / max(1, self.proxy_batch_total) * 100)
+        if self.proxy_batch_ids:
+            self.task_progress.emit("proxy-pool-check", progress, f"{completed}/{self.proxy_batch_total} checked")
+        else:
+            records = self.proxy_repository.list_all()
+            live = sum(item.status == "live" and item.enabled for item in records)
+            self.task_finished.emit("proxy-pool-check", True, f"{live}/{len(records)} available")
+            self.proxy_batch_total = 0
 
     def load_extensions(self) -> list[ExtensionRecord]:
         records = self.extension_repository.list_all()
@@ -797,6 +856,55 @@ class ProfileController(QObject):
             tags=source.tags,
         )
 
+    def bulk_update_profiles(self, profile_ids: list[str], updates: dict[str, object]) -> list[Profile]:
+        profiles = [self.repository.get_profile(profile_id) for profile_id in dict.fromkeys(profile_ids)]
+        profiles = [profile for profile in profiles if profile and not profile.deleted_at]
+        if not profiles:
+            raise ValueError("No profiles selected.")
+        running = [profile.name for profile in profiles if profile.id in self.worker_threads or profile.status != "stopped"]
+        if running:
+            raise BrowserLaunchError(f"Stop these profiles before bulk editing: {', '.join(running[:5])}")
+        snapshots = [replace(profile, extension_ids=list(profile.extension_ids) if profile.extension_ids is not None else None, bookmark_ids=list(profile.bookmark_ids) if profile.bookmark_ids is not None else None) for profile in profiles]
+        resolved_updates = dict(updates)
+        if resolved_updates.get("proxy") == "__best__":
+            best = self.best_proxy()
+            if not best:
+                raise ValueError("Smart Proxy Pool has no live proxy available.")
+            resolved_updates["proxy"] = best.url
+        notes_mode = str(resolved_updates.pop("notes_mode", "replace"))
+        for profile in profiles:
+            if "group_name" in resolved_updates: profile.group_name = str(resolved_updates["group_name"] or "").strip()
+            if "tags" in resolved_updates: profile.tags = str(resolved_updates["tags"] or "").strip()
+            if "startup_url" in resolved_updates: profile.startup_url = normalize_startup_url(str(resolved_updates["startup_url"] or ""))
+            if "proxy" in resolved_updates: profile.proxy = normalize_proxy(str(resolved_updates["proxy"] or "")) or None
+            if "notes" in resolved_updates:
+                text = str(resolved_updates["notes"] or "").strip()
+                profile.notes = f"{profile.notes} · {text}".strip(" ·") if notes_mode == "append" and text else text
+            if "extension_ids" in resolved_updates: profile.extension_ids = [str(item) for item in resolved_updates["extension_ids"]]  # type: ignore[arg-type]
+            if "bookmark_ids" in resolved_updates: profile.bookmark_ids = [str(item) for item in resolved_updates["bookmark_ids"]]  # type: ignore[arg-type]
+            profile.updated_at = Profile.now_timestamp()
+            self.repository.update_profile(profile)
+            self._log("profile.bulk_updated", profile, details=", ".join(sorted(updates)))
+        self.load_profiles()
+        self.info_message.emit(f"Updated {len(profiles)} profiles")
+        return snapshots
+
+    def restore_profile_snapshots(self, snapshots: list[Profile]) -> int:
+        restored = 0
+        for snapshot in snapshots:
+            current = self.repository.get_profile(snapshot.id)
+            if not current or current.deleted_at or current.status != "stopped":
+                continue
+            snapshot.status = "stopped"
+            snapshot.updated_at = Profile.now_timestamp()
+            self.repository.update_profile(snapshot)
+            restored += 1
+        if restored:
+            self.load_profiles()
+            self._log("profiles.bulk_undo", details=f"Restored {restored} profile(s)")
+            self.info_message.emit(f"Restored {restored} profile changes")
+        return restored
+
     def delete_profile(self, profile_id: str) -> None:
         profile = self.repository.get_profile(profile_id)
         if not profile:
@@ -959,6 +1067,7 @@ class ProfileController(QObject):
         thread.finished.connect(thread.deleteLater)
         self.maintenance_workers[key] = worker
         self.maintenance_threads[key] = thread
+        self.task_started.emit(key, key.replace("-", " ").title(), "Background operation")
         thread.start()
 
     def _cleanup_maintenance(self, key: str) -> None:
@@ -998,6 +1107,7 @@ class ProfileController(QObject):
             self.create_backup(automatic=True)
 
     def _handle_maintenance_finished(self, key: str, result: object) -> None:
+        self.task_finished.emit(key, True, str(result or "Completed"))
         if key == "backup":
             payload = dict(result or {})
             path = str(payload.get("path") or "")
@@ -1022,6 +1132,7 @@ class ProfileController(QObject):
             self.load_fingerprint_lab()
 
     def _handle_maintenance_failed(self, key: str, message: str) -> None:
+        self.task_finished.emit(key, False, message)
         self.maintenance_repository.log(f"{key}.failed", severity="error", details=message)
         self.load_activity()
         self.operation_failed.emit(message)
@@ -1076,7 +1187,17 @@ class ProfileController(QObject):
         if profile.deleted_at:
             raise BrowserLaunchError("Restore this profile from Trash before opening it.")
 
+        report = self.profile_compatibility(profile_id)
+        if report.blockers:
+            self._log("profile.compatibility_blocked", profile, "warning", blocker_message(report))
+            raise BrowserLaunchError(blocker_message(report))
+        if report.warnings:
+            self.info_message.emit(
+                f"Compatibility Guard · {report.score}/100 · {len(report.warnings)} warning(s)"
+            )
+
         self._log("profile.open_requested", profile)
+        self.task_started.emit(f"profile-open:{profile.id}", f"Open {profile.name}", "Preparing browser")
 
         if profile.proxy:
             self.repository.update_status(profile_id, "checking", Profile.now_timestamp())
@@ -1086,7 +1207,23 @@ class ProfileController(QObject):
             self._start_proxy_check("profile", profile_id, profile.proxy)
             self.info_message.emit(f"Checking proxy for {profile.name}...")
             return
-        self._start_browser(profile)
+        try:
+            self._start_browser(profile)
+        except Exception as error:
+            self.task_finished.emit(f"profile-open:{profile.id}", False, str(error))
+            raise
+
+    def profile_compatibility(self, profile_id: str):
+        profile = self.repository.get_profile(profile_id)
+        if not profile:
+            raise ValueError("Profile does not exist.")
+        proxy_record = next((item for item in self.proxy_repository.list_all() if item.url == profile.proxy), None)
+        return check_profile_compatibility(
+            profile,
+            proxy_record=proxy_record,
+            all_profiles=self.repository.list_profiles(),
+            version_info=self.cloak_version_info() if profile.browser_engine == "cloak" else None,
+        )
 
     def _start_browser(self, profile: Profile) -> None:
         profile_id = profile.id
@@ -1169,6 +1306,7 @@ class ProfileController(QObject):
                 self.info_message.emit(f"Proxy is live · {result.latency_ms} ms · {result.exit_ip}{location_text}")
             else:
                 self.info_message.emit(f"Proxy is dead · {result.error}")
+            self._update_proxy_batch_task(target_id)
             return
 
         profile = self.repository.get_profile(target_id)
@@ -1190,6 +1328,7 @@ class ProfileController(QObject):
             self.operation_failed.emit(
                 f"Cannot open {profile.name}: proxy is not live.\n{result.error}"
             )
+            self.task_finished.emit(f"profile-open:{profile.id}", False, result.error or "Proxy is not live")
             return
         self.info_message.emit(
             f"Proxy live · {result.latency_ms} ms · {result.exit_ip}"
@@ -1201,6 +1340,7 @@ class ProfileController(QObject):
             self.repository.update_status(target_id, "stopped", Profile.now_timestamp())
             self.load_profiles()
             self.operation_failed.emit(f"Could not open {profile.name}: {error}")
+            self.task_finished.emit(f"profile-open:{profile.id}", False, str(error))
 
     def _profile_bookmark_extension(self, profile: Profile) -> Path:
         source = builtin_extension_dir()
@@ -1273,6 +1413,7 @@ class ProfileController(QObject):
         self._log("profile.opened", profile)
         self.load_profiles()
         self.profile_opened.emit(profile_id)
+        self.task_finished.emit(f"profile-open:{profile_id}", True, "Browser opened")
 
     def _cleanup_session(self, profile_id: str) -> None:
         self.running_profiles.pop(profile_id, None)
@@ -1303,3 +1444,4 @@ class ProfileController(QObject):
         profile = self.repository.get_profile(profile_id)
         self._log("profile.failed", profile, "error", error_message)
         self.operation_failed.emit(error_message)
+        self.task_finished.emit(f"profile-open:{profile_id}", False, error_message)

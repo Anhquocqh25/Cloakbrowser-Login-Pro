@@ -5,7 +5,7 @@ from functools import partial
 from urllib.parse import unquote, urlparse
 
 from PySide6.QtCore import QRectF, QTimer, Signal, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QHeaderView, QHBoxLayout, QLabel, QMenu, QPushButton,
     QTableWidget, QTableWidgetItem, QToolButton, QWidget,
@@ -106,6 +106,7 @@ class ProfileTable(QTableWidget):
     metadata_updated = Signal(str, str, object)
     health_requested = Signal(str)
     export_requested = Signal(str)
+    compatibility_requested = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(0, len(PROFILE_COLUMNS), parent)
@@ -313,6 +314,7 @@ class ProfileTable(QTableWidget):
         select.toggled.connect(partial(self._set_profile_checked, profile.id))
         self.setCellWidget(row, self.column_indexes["select"], self._centered(select))
         self._set_item(row, "name", profile.name, editable=True, bold=True)
+        self.item(row, self.column_indexes["name"]).setIcon(self._avatar_icon(profile))
         self._set_item(row, "pinned", "★" if profile.pinned else "—")
         self.setCellWidget(row, self.column_indexes["run"], self._run_widget(profile))
         self.setCellWidget(row, self.column_indexes["actions"], self._actions_widget(profile))
@@ -335,6 +337,17 @@ class ProfileTable(QTableWidget):
         self._set_item(row, "proxy_port", port)
         self._set_item(row, "proxy_password", password)
         self._set_item(row, "sharing", "Private")
+
+    @staticmethod
+    def _avatar_icon(profile: Profile) -> QIcon:
+        palette = ("#20b89a", "#4f7cff", "#8b5cf6", "#e8795a", "#d69e2e", "#0ea5b7")
+        color = QColor(palette[sum(profile.id.encode("utf-8")) % len(palette)])
+        pixmap = QPixmap(28, 28); pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap); painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen); painter.setBrush(color); painter.drawEllipse(2, 2, 24, 24)
+        painter.setPen(QColor("#ffffff")); font = painter.font(); font.setBold(True); font.setPointSize(9); painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, (profile.name.strip()[:1] or "?").upper()); painter.end()
+        return QIcon(pixmap)
 
     @staticmethod
     def _centered(widget: QWidget, left: int = 4, right: int = 4) -> QWidget:
@@ -367,6 +380,7 @@ class ProfileTable(QTableWidget):
         menu.addAction("Unpin" if profile.pinned else "Pin", partial(self.metadata_updated.emit, profile.id, "pinned", not profile.pinned))
         menu.addAction("Edit profile", partial(self.edit_requested.emit, profile.id))
         menu.addAction("Check profile", partial(self.health_requested.emit, profile.id))
+        menu.addAction("Compatibility report", partial(self.compatibility_requested.emit, profile.id))
         menu.addAction("Export profile", partial(self.export_requested.emit, profile.id))
         menu.addAction("Clone", partial(self.clone_requested.emit, profile.id))
         menu.addSeparator()

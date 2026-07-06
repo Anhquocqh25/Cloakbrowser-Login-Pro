@@ -22,6 +22,10 @@ UPDATE_MANIFEST_URL = (
     "https://raw.githubusercontent.com/Anhquocqh25/"
     "Cloakbrowser-Login-Pro/main/release/latest.json"
 )
+GITHUB_LATEST_RELEASE_API = (
+    "https://api.github.com/repos/Anhquocqh25/"
+    "Cloakbrowser-Login-Pro/releases/latest"
+)
 UPDATE_USER_AGENT = "CloakBrowser-Login-Pro-Updater"
 
 
@@ -75,10 +79,35 @@ def is_newer_version(candidate: str, current: str) -> bool:
 
 
 def fetch_update_info(timeout: float = 15.0) -> AppUpdateInfo:
-    separator = "&" if "?" in UPDATE_MANIFEST_URL else "?"
+    # Prefer a proper GitHub Release asset. The raw manifest remains a fallback
+    # for first installs and temporary GitHub API rate-limit failures.
+    try:
+        release = _fetch_json(GITHUB_LATEST_RELEASE_API, timeout)
+        assets = release.get("assets", []) if isinstance(release, dict) else []
+        manifest_asset = next(
+            (item for item in assets if str(item.get("name", "")).casefold() in {"latest.json", "cloakbrowser-login-latest.json"}),
+            None,
+        )
+        if manifest_asset:
+            payload = _fetch_json(str(manifest_asset.get("browser_download_url") or ""), timeout)
+        else:
+            raise RuntimeError("Latest release has no update manifest asset.")
+    except Exception:
+        separator = "&" if "?" in UPDATE_MANIFEST_URL else "?"
+        payload = _fetch_json(f"{UPDATE_MANIFEST_URL}{separator}t={int(time.time())}", timeout)
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub returned invalid update information.")
+    return AppUpdateInfo.from_payload(payload)
+
+
+def _fetch_json(url: str, timeout: float) -> dict:
     request = urllib.request.Request(
-        f"{UPDATE_MANIFEST_URL}{separator}t={int(time.time())}",
-        headers={"User-Agent": UPDATE_USER_AGENT, "Accept": "application/json"},
+        url,
+        headers={
+            "User-Agent": UPDATE_USER_AGENT,
+            "Accept": "application/vnd.github+json, application/json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
     )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
@@ -91,7 +120,7 @@ def fetch_update_info(timeout: float = 15.0) -> AppUpdateInfo:
         raise RuntimeError("GitHub returned invalid update information.") from error
     if not isinstance(payload, dict):
         raise RuntimeError("GitHub returned invalid update information.")
-    return AppUpdateInfo.from_payload(payload)
+    return payload
 
 
 def installation_mode(application_dir: Path | None = None) -> str:

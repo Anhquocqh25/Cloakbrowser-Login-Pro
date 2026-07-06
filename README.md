@@ -4,16 +4,16 @@
 
 ## Tải bản chạy sẵn
 
-Phiên bản đầu tiên: **0.1.0**
+Phiên bản mới nhất: **0.1.1**
 
 Bạn có thể chọn một trong hai bản:
 
 ### Bản cài đặt trực tiếp
 
-[Download Installer EXE 0.1.0](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/raw/main/release/CloakBrowser-Login-Pro-Setup-0.1.0-Windows.exe)
+[Download Installer EXE 0.1.1](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.1/CloakBrowser-Login-Pro-Setup-0.1.1-Windows.exe)
 
 1. Tải file EXE ở link trên.
-2. Mở file `CloakBrowser-Login-Pro-Setup-0.1.0-Windows.exe`.
+2. Mở file `CloakBrowser-Login-Pro-Setup-0.1.1-Windows.exe`.
 3. Bấm Next/Install để cài app.
 4. Sau khi cài, mở app từ Start Menu hoặc shortcut Desktop nếu đã chọn.
 
@@ -21,7 +21,7 @@ Installer cài theo user hiện tại, không cần quyền Administrator.
 
 ### Bản portable
 
-[Download Portable ZIP 0.1.0](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/raw/main/release/CloakBrowser-Login-0.1.0-Windows.zip)
+[Download Portable ZIP 0.1.1](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.1/CloakBrowser-Login-0.1.1-Windows.zip)
 
 1. Tải file ZIP.
 2. Giải nén ra một thư mục bất kỳ.
@@ -46,6 +46,13 @@ Bản portable phù hợp nếu bạn muốn chạy trực tiếp, không cần 
 - Fingerprint Lab: CloakBrowser version, Consistency Engine, snapshot/diff, Seed Lock, Duplicate Detector, Regression Test.
 - Thùng rác profile, khôi phục hoặc xóa vĩnh viễn sau thời gian giữ.
 - Hỗ trợ giao diện tiếng Việt/tiếng Anh.
+- Dashboard tổng quan và onboarding cho lần chạy đầu tiên.
+- Profile Presets, sửa hàng loạt và hoàn tác thay đổi.
+- Saved Views, bộ lọc nâng cao, avatar màu và nhóm hồ sơ.
+- Task Center theo dõi mở profile, kiểm tra proxy, backup và cập nhật.
+- Command Palette, phím tắt và sidebar thích ứng.
+- Fingerprint Compatibility Guard kiểm tra cấu hình trước khi chạy.
+- Smart Proxy Pool chấm điểm chất lượng, kiểm tra định kỳ và cooldown proxy lỗi.
 - DuckDuckGo là công cụ tìm kiếm mặc định, được áp dụng bằng extension đơn nhiệm thay vì sửa trực tiếp dữ liệu bảo vệ của Chromium.
 - Kiểm tra, tải và xác minh cập nhật ngay trong trang Cài đặt.
 - Bản installer tự chạy bộ cài mới; bản portable tự thay thế tệp ứng dụng sau khi đóng app.
@@ -82,6 +89,12 @@ Sau khi build, file chạy nằm trong:
 dist\CloakBrowser Login\CloakBrowser Login.exe
 ```
 
+Để tạo đầy đủ portable, installer, checksum và manifest cập nhật:
+
+```powershell
+.\build_release.ps1 -Notes "Mô tả thay đổi của phiên bản"
+```
+
 ## Dữ liệu cục bộ
 
 App lưu dữ liệu profile, cấu hình, proxy, extension và bookmark tại:
@@ -98,6 +111,7 @@ Mỗi bản mới cần build lại cả installer và portable, tính SHA-256 c
 
 ## Phiên bản
 
+- `0.1.1`: nâng cấp trải nghiệm người dùng, Compatibility Guard, Smart Proxy Pool và hệ thống phát hành/cập nhật chuẩn.
 - `0.1.0`: bản public đầu tiên.
 
 Các bản cập nhật sau này sẽ nâng version lên tiếp theo.

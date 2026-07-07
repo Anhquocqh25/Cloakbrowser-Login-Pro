@@ -29,7 +29,18 @@ Compress-Archive -Path $Target -DestinationPath $Portable -CompressionLevel Opti
 & (Join-Path $ProjectDir "build_installer.ps1") -ReleaseRoot $ReleaseRoot
 
 $Python = Join-Path $ProjectDir ".venv\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $Python)) { $Python = (Get-Command python).Source }
-& $Python (Join-Path $ProjectDir "tools\update_release_manifest.py") --version $Version --release-root $ReleaseRoot --notes $Notes
+$PythonArgs = @()
+if (-not (Test-Path -LiteralPath $Python)) {
+    $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($PythonCommand) {
+        $Python = $PythonCommand.Source
+    } else {
+        $PythonCommand = Get-Command py -ErrorAction SilentlyContinue
+        if (-not $PythonCommand) { throw "Python was not found. Create .venv or install Python first." }
+        $Python = $PythonCommand.Source
+        $PythonArgs = @("-3")
+    }
+}
+& $Python @PythonArgs (Join-Path $ProjectDir "tools\update_release_manifest.py") --version $Version --release-root $ReleaseRoot --notes $Notes
 if ($LASTEXITCODE -ne 0) { throw "Could not create release manifest." }
 Write-Host "Release $Version complete: $ReleaseRoot"

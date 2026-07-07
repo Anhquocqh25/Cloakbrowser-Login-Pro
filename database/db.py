@@ -3,6 +3,7 @@
 import sqlite3
 
 from config import DATABASE_PATH
+from services.data_guard import StartupRecoveryReport, backup_database_snapshot, recover_orphaned_profiles
 from utils.paths import ensure_app_directories
 
 
@@ -137,7 +138,8 @@ def get_connection() -> sqlite3.Connection:
     return connection
 
 
-def initialize_database() -> None:
+def initialize_database() -> StartupRecoveryReport:
+    backup_path = backup_database_snapshot("startup")
     with get_connection() as connection:
         connection.execute(CREATE_PROFILES_TABLE_SQL)
         connection.execute(CREATE_PROXIES_TABLE_SQL)
@@ -206,4 +208,8 @@ def initialize_database() -> None:
             )
         # Running browser objects cannot survive an application restart.
         connection.execute("UPDATE profiles SET status = 'stopped' WHERE status != 'stopped'")
+        report = recover_orphaned_profiles(connection)
+        if backup_path:
+            report.database_backup = str(backup_path)
         connection.commit()
+        return report

@@ -1,8 +1,8 @@
 {
-  "version": "0.1.2",
-  "notes": "Sidebar SVG icons, modern dropdowns, Runtime Watcher improvements, User-Agent selector, Fingerprint Snapshot report, proxy auto-match, Safe Clone and multi-tab startup URLs.",
-  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.2/CloakBrowser-Login-0.1.2-Windows.zip",
-  "portable_sha256": "b3501dc833fccffaef17ea9e90a5dc7da6de2793ddfcbc7640fa915f63c22bbc",
-  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.2/CloakBrowser-Login-Pro-Setup-0.1.2-Windows.exe",
-  "installer_sha256": "14a8ab713de1277b5de068f987cc62ab39949a4c9ce772a5d9d527c254597813"
+  "version": "0.1.3",
+  "notes": "Data Guard: automatic app.db startup snapshots, profile.json sidecars, and orphan profile recovery when the profile database is missing or recreated.",
+  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.3/CloakBrowser-Login-0.1.3-Windows.zip",
+  "portable_sha256": "d009bbf4695a494f9589ba4d4c1c30757519309414c34e0b55fdb0574077d767",
+  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.3/CloakBrowser-Login-Pro-Setup-0.1.3-Windows.exe",
+  "installer_sha256": "0d547b4a5f9ea48796d904c628dac1c78c47a40a1bbff92772d1420016cfc203"
 }

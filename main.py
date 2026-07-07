@@ -16,7 +16,8 @@ for _stream_name in ("stdout", "stderr"):
         _windowed_streams.append(_stream)
 
 from PySide6.QtGui import QFont, QFontDatabase, QIcon
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QMessageBox
 
 from config import APP_NAME
 from controllers.profile_controller import ProfileController
@@ -28,7 +29,7 @@ from utils.i18n import install_i18n, set_language
 
 
 def main() -> int:
-    initialize_database()
+    startup_report = initialize_database()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     project_dir = Path(__file__).resolve().parent
@@ -49,6 +50,16 @@ def main() -> int:
     controller = ProfileController(repository, config_store=config_store)
     window = MainWindow(controller, config_store)
     window.show()
+    if startup_report.recovered_anything:
+        total = startup_report.recovered_profiles + startup_report.recovered_deleted_profiles
+        message = (
+            f"Recovered {total} profile(s) from existing browser data.\n\n"
+            "The app found browser profile folders that were not listed in app.db, "
+            "so it restored them automatically. Please review proxy, OS and fingerprint settings "
+            "for any profile restored without an existing profile.json sidecar."
+        )
+        QTimer.singleShot(400, lambda: QMessageBox.information(window, "Profile recovery", message))
+        QTimer.singleShot(450, lambda: window.show_status(f"Recovered {total} profile(s) from local data"))
 
     return app.exec()
 

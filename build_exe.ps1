@@ -2,18 +2,27 @@ $ErrorActionPreference = "Stop"
 
 $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Python = Join-Path $ProjectDir ".venv\Scripts\python.exe"
+$PythonArgs = @()
 
 if (-not (Test-Path -LiteralPath $Python)) {
     $PythonCommand = Get-Command python -ErrorAction SilentlyContinue
+    if ($PythonCommand) {
+        $Python = $PythonCommand.Source
+    } else {
+        $PythonCommand = Get-Command py -ErrorAction SilentlyContinue
+    }
     if (-not $PythonCommand) {
         throw "Python was not found. Create .venv or install Python first."
     }
-    $Python = $PythonCommand.Source
+    if ((Split-Path -Leaf $PythonCommand.Source) -ieq "py.exe") {
+        $Python = $PythonCommand.Source
+        $PythonArgs = @("-3")
+    }
 }
 
 $PreviousErrorActionPreference = $ErrorActionPreference
 $ErrorActionPreference = "Continue"
-& $Python -m PyInstaller `
+& $Python @PythonArgs -m PyInstaller `
     --noconfirm `
     --clean `
     --distpath (Join-Path $ProjectDir "dist") `

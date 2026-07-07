@@ -4,16 +4,16 @@
 
 ## Tải bản chạy sẵn
 
-Phiên bản mới nhất: **0.1.1**
+Phiên bản mới nhất: **0.1.3**
 
 Bạn có thể chọn một trong hai bản:
 
 ### Bản cài đặt trực tiếp
 
-[Download Installer EXE 0.1.1](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.1/CloakBrowser-Login-Pro-Setup-0.1.1-Windows.exe)
+[Download Installer EXE 0.1.3](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.3/CloakBrowser-Login-Pro-Setup-0.1.3-Windows.exe)
 
 1. Tải file EXE ở link trên.
-2. Mở file `CloakBrowser-Login-Pro-Setup-0.1.1-Windows.exe`.
+2. Mở file `CloakBrowser-Login-Pro-Setup-0.1.3-Windows.exe`.
 3. Bấm Next/Install để cài app.
 4. Sau khi cài, mở app từ Start Menu hoặc shortcut Desktop nếu đã chọn.
 
@@ -21,7 +21,7 @@ Installer cài theo user hiện tại, không cần quyền Administrator.
 
 ### Bản portable
 
-[Download Portable ZIP 0.1.1](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.1/CloakBrowser-Login-0.1.1-Windows.zip)
+[Download Portable ZIP 0.1.3](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.3/CloakBrowser-Login-0.1.3-Windows.zip)
 
 1. Tải file ZIP.
 2. Giải nén ra một thư mục bất kỳ.
@@ -56,6 +56,7 @@ Bản portable phù hợp nếu bạn muốn chạy trực tiếp, không cần 
 - DuckDuckGo là công cụ tìm kiếm mặc định, được áp dụng bằng extension đơn nhiệm thay vì sửa trực tiếp dữ liệu bảo vệ của Chromium.
 - Kiểm tra, tải và xác minh cập nhật ngay trong trang Cài đặt.
 - Bản installer tự chạy bộ cài mới; bản portable tự thay thế tệp ứng dụng sau khi đóng app.
+- Data Guard 0.1.3 tự backup `app.db`, tự khôi phục profile mồ côi từ thư mục `profiles` và lưu `profile.json` trong từng profile để tránh mất danh sách profile/thùng rác khi DB bị tạo lại.
 
 ## Chạy từ source code
 
@@ -111,6 +112,7 @@ Mỗi bản mới cần build lại cả installer và portable, tính SHA-256 c
 
 ## Phiên bản
 
+- `0.1.3`: Data Guard, database startup snapshot, profile sidecar `profile.json` và tự khôi phục profile mồ côi khi `app.db` bị mất/tạo lại.
 - `0.1.2`: sidebar icon mới, dropdown hiện đại, Runtime Watcher chắc hơn, User-Agent selector, Fingerprint Snapshot theo profile, proxy auto-match, Safe Clone và multi-tab startup URL.
 - `0.1.1`: nâng cấp trải nghiệm người dùng, Compatibility Guard, Smart Proxy Pool và hệ thống phát hành/cập nhật chuẩn.
 - `0.1.0`: bản public đầu tiên.

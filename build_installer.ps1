@@ -17,6 +17,7 @@ $Script = Join-Path $ProjectDir "installer\cloakbrowser-login-pro.iss"
 
 $Candidates = @(
     (Join-Path (Split-Path -Parent $ProjectDir) "tools\Inno Setup 6\ISCC.exe"),
+    "D:\Vs Code Ai Agent\CloakBrowser Login\tools\Inno Setup 6\ISCC.exe",
     "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     "C:\Program Files\Inno Setup 6\ISCC.exe"
 )

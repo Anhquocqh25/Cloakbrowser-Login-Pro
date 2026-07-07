@@ -2,9 +2,34 @@
 
 from database.db import get_connection
 from models.profile import Profile
+from services.profile_sidecar import write_profile_sidecar
 
 
 class ProfileRepository:
+    def _profile_from_row(self, row) -> Profile | None:
+        return Profile.from_row(row) if row else None
+
+    def _select_profile(self, connection, profile_id: str) -> Profile | None:
+        row = connection.execute(
+            """
+            SELECT id, name, proxy, timezone, locale, screen_width, screen_height,
+                   fingerprint_seed, auto_geoip, platform, browser_engine, notes, user_agent, startup_url,
+                   extension_ids, bookmark_ids, status, deleted_at, group_name, tags, pinned,
+                   last_used_at, health_status, health_checked_at, seed_locked, created_at, updated_at
+            FROM profiles
+            WHERE id = ?
+            """,
+            (profile_id,),
+        ).fetchone()
+        return self._profile_from_row(row)
+
+    def _sync_sidecar(self, profile: Profile | None) -> None:
+        if profile is not None:
+            try:
+                write_profile_sidecar(profile)
+            except OSError:
+                pass
+
     def list_profiles(self) -> list[Profile]:
         with get_connection() as connection:
             rows = connection.execute(
@@ -33,7 +58,7 @@ class ProfileRepository:
                 """,
                 (profile_id,),
             ).fetchone()
-        return Profile.from_row(row) if row else None
+        return self._profile_from_row(row)
 
     def create_profile(self, profile: Profile) -> None:
         with get_connection() as connection:
@@ -49,6 +74,7 @@ class ProfileRepository:
                 profile.to_db_tuple(),
             )
             connection.commit()
+        self._sync_sidecar(profile)
 
     def create_profiles(self, profiles: list[Profile]) -> None:
         if not profiles:
@@ -66,6 +92,8 @@ class ProfileRepository:
                 [profile.to_db_tuple() for profile in profiles],
             )
             connection.commit()
+        for profile in profiles:
+            self._sync_sidecar(profile)
 
     def update_profile(self, profile: Profile) -> None:
         with get_connection() as connection:
@@ -129,6 +157,7 @@ class ProfileRepository:
                 ),
             )
             connection.commit()
+        self._sync_sidecar(profile)
 
     def list_deleted_profiles(self) -> list[Profile]:
         with get_connection() as connection:
@@ -151,7 +180,9 @@ class ProfileRepository:
                 "UPDATE profiles SET deleted_at = ?, status = 'stopped', updated_at = ? WHERE id = ?",
                 (deleted_at, deleted_at, profile_id),
             )
+            profile = self._select_profile(connection, profile_id)
             connection.commit()
+        self._sync_sidecar(profile)
 
     def restore_profile(self, profile_id: str, updated_at: str) -> None:
         with get_connection() as connection:
@@ -159,7 +190,9 @@ class ProfileRepository:
                 "UPDATE profiles SET deleted_at = '', status = 'stopped', updated_at = ? WHERE id = ?",
                 (updated_at, profile_id),
             )
+            profile = self._select_profile(connection, profile_id)
             connection.commit()
+        self._sync_sidecar(profile)
 
     def update_status(self, profile_id: str, status: str, updated_at: str) -> None:
         with get_connection() as connection:
@@ -182,7 +215,9 @@ class ProfileRepository:
                 f"UPDATE profiles SET {field} = ?, updated_at = ? WHERE id = ?",
                 (int(value) if field == "pinned" else value, updated_at, profile_id),
             )
+            profile = self._select_profile(connection, profile_id)
             connection.commit()
+        self._sync_sidecar(profile)
 
     def update_health(self, profile_id: str, status: str, checked_at: str) -> None:
         with get_connection() as connection:
@@ -190,7 +225,9 @@ class ProfileRepository:
                 "UPDATE profiles SET health_status = ?, health_checked_at = ? WHERE id = ?",
                 (status, checked_at, profile_id),
             )
+            profile = self._select_profile(connection, profile_id)
             connection.commit()
+        self._sync_sidecar(profile)
 
     def mark_used(self, profile_id: str, timestamp: str) -> None:
         with get_connection() as connection:
@@ -198,7 +235,9 @@ class ProfileRepository:
                 "UPDATE profiles SET last_used_at = ?, updated_at = ? WHERE id = ?",
                 (timestamp, timestamp, profile_id),
             )
+            profile = self._select_profile(connection, profile_id)
             connection.commit()
+        self._sync_sidecar(profile)
 
     def set_seed_locked(self, profile_id: str, locked: bool, updated_at: str) -> None:
         with get_connection() as connection:
@@ -206,7 +245,9 @@ class ProfileRepository:
                 "UPDATE profiles SET seed_locked = ?, updated_at = ? WHERE id = ?",
                 (int(locked), updated_at, profile_id),
             )
+            profile = self._select_profile(connection, profile_id)
             connection.commit()
+        self._sync_sidecar(profile)
 
     def replace_proxy_url(self, old_url: str, new_url: str, updated_at: str) -> int:
         with get_connection() as connection:
@@ -214,7 +255,23 @@ class ProfileRepository:
                 "UPDATE profiles SET proxy = ?, updated_at = ? WHERE proxy = ?",
                 (new_url, updated_at, old_url),
             )
+            profiles = [
+                self._profile_from_row(row)
+                for row in connection.execute(
+                    """
+                    SELECT id, name, proxy, timezone, locale, screen_width, screen_height,
+                           fingerprint_seed, auto_geoip, platform, browser_engine, notes, user_agent, startup_url,
+                           extension_ids, bookmark_ids, status, deleted_at, group_name, tags, pinned,
+                           last_used_at, health_status, health_checked_at, seed_locked, created_at, updated_at
+                    FROM profiles
+                    WHERE proxy = ?
+                    """,
+                    (new_url,),
+                ).fetchall()
+            ]
             connection.commit()
+            for profile in profiles:
+                self._sync_sidecar(profile)
             return cursor.rowcount
 
     def clear_proxy_url(self, url: str, updated_at: str) -> int:
@@ -223,7 +280,23 @@ class ProfileRepository:
                 "UPDATE profiles SET proxy = NULL, updated_at = ? WHERE proxy = ?",
                 (updated_at, url),
             )
+            profiles = [
+                self._profile_from_row(row)
+                for row in connection.execute(
+                    """
+                    SELECT id, name, proxy, timezone, locale, screen_width, screen_height,
+                           fingerprint_seed, auto_geoip, platform, browser_engine, notes, user_agent, startup_url,
+                           extension_ids, bookmark_ids, status, deleted_at, group_name, tags, pinned,
+                           last_used_at, health_status, health_checked_at, seed_locked, created_at, updated_at
+                    FROM profiles
+                    WHERE updated_at = ? AND proxy IS NULL
+                    """,
+                    (updated_at,),
+                ).fetchall()
+            ]
             connection.commit()
+            for profile in profiles:
+                self._sync_sidecar(profile)
             return cursor.rowcount
 
     def delete_profile(self, profile_id: str) -> None:

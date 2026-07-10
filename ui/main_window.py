@@ -7,8 +7,8 @@ from functools import partial
 from pathlib import Path
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QProcess, QSignalBlocker, QSize, QTimer, Qt
-from PySide6.QtGui import QColor, QFont, QKeySequence, QPixmap, QShortcut
+from PySide6.QtCore import QProcess, QSignalBlocker, QSize, QTimer, Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout,
     QComboBox, QFileDialog, QGridLayout, QHeaderView, QLabel, QLineEdit,
@@ -28,6 +28,7 @@ from services.update_service import (
     AppUpdateInfo, UpdateCheckThread, UpdateDownloadThread,
     installation_mode, is_newer_version, launch_downloaded_update, update_asset,
 )
+from services.backup_service import create_full_backup
 from storage.config_store import ConfigStore
 from ui.add_extension_dialog import AddExtensionDialog
 from ui.batch_create_dialog import BatchCreateDialog
@@ -87,6 +88,7 @@ class MainWindow(QMainWindow):
         self._sidebar_collapsed = self.config_store.sidebar_collapsed()
         self._task_ids: dict[str, str] = {}
         self._auto_sidebar_applied = False
+        self._last_visible_profiles: list[Profile] = []
 
         self.width_save_timer = QTimer(self)
         self.width_save_timer.setSingleShot(True)
@@ -141,6 +143,10 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(start_page)
         self._sync_nav_selection(start_page)
         self._set_sidebar_collapsed(self._sidebar_collapsed, persist=False)
+        self.toast_label = QLabel(self)
+        self.toast_label.setObjectName("toastNotification")
+        self.toast_label.setWordWrap(True)
+        self.toast_label.hide()
 
     def _build_sidebar(self) -> QWidget:
         sidebar = QFrame()
@@ -370,7 +376,34 @@ class MainWindow(QMainWindow):
         self.os_filter = ModernComboBox()
         for label, value in (("All systems", ""), ("Windows 11", "windows"), ("macOS", "macos"), ("Linux", "linux")):
             self.os_filter.addItem(label, value)
+        self.quick_filter = ModernComboBox()
+        self.quick_filter.setMinimumWidth(150)
+        for label, value in (
+            ("All quick filters", ""), ("Recently opened", "recent"),
+            ("Has warning", "warning"), ("No proxy", "no_proxy"),
+            ("Proxy failed", "proxy_failed"), ("Running now", "running"),
+        ):
+            self.quick_filter.addItem(label, value)
+        self.tag_filter = ModernComboBox(); self.tag_filter.addItem("All tags", "")
+        self.tag_filter.setMinimumWidth(130)
+        self.density_input = ModernComboBox()
+        for label, value in (("Comfortable", "comfortable"), ("Compact", "compact"), ("Wide", "wide")):
+            self.density_input.addItem(label, value)
+        self.density_input.setCurrentIndex(max(0, self.density_input.findData(self.config_store.profile_density())))
+        self.density_input.setMinimumWidth(128)
         self.pinned_filter = QCheckBox("Pinned only")
+        group_tools = QToolButton()
+        group_tools.setObjectName("groupTagButton")
+        group_tools.setText("Group/Tag")
+        group_tools.setMinimumWidth(92)
+        group_tools.setPopupMode(QToolButton.InstantPopup)
+        group_menu = QMenu(group_tools)
+        group_menu.addAction("Set group for selection", self.bulk_set_group)
+        group_menu.addAction("Add tag to selection", self.bulk_add_tag)
+        group_menu.addAction("Clear tags from selection", self.bulk_clear_tags)
+        group_menu.addSeparator()
+        group_menu.addAction("Show group/tag summary", self.show_group_tag_summary)
+        group_tools.setMenu(group_menu)
         self.saved_view_input = ModernComboBox(); self.saved_view_input.setMinimumWidth(150)
         self.saved_view_input.currentIndexChanged.connect(self._apply_saved_view)
         save_view = QPushButton("Save view"); save_view.clicked.connect(self.save_current_view)
@@ -382,7 +415,11 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.group_filter)
         filter_layout.addWidget(self.status_filter)
         filter_layout.addWidget(self.os_filter)
+        filter_layout.addWidget(self.quick_filter)
+        filter_layout.addWidget(self.tag_filter)
+        filter_layout.addWidget(self.density_input)
         filter_layout.addWidget(self.pinned_filter)
+        filter_layout.addWidget(group_tools)
         filter_layout.addStretch(1)
         layout.addWidget(filters)
 
@@ -403,6 +440,12 @@ class MainWindow(QMainWindow):
         self.bulk_delete_button = QPushButton("Move to Trash")
         self.bulk_delete_button.setObjectName("bulkDeleteButton")
         self.bulk_delete_button.setEnabled(False)
+        self.bulk_stop_button = QPushButton("Stop selected")
+        self.bulk_stop_button.setEnabled(False)
+        self.bulk_health_button = QPushButton("Check selected")
+        self.bulk_health_button.setEnabled(False)
+        self.bulk_export_button = QPushButton("Export")
+        self.bulk_export_button.setEnabled(False)
         self.bulk_edit_button = QPushButton("Bulk edit")
         self.bulk_edit_button.setEnabled(False)
         create_batch_button = QPushButton("+ Create batch")
@@ -413,6 +456,9 @@ class MainWindow(QMainWindow):
         bulk_layout.addWidget(self.select_all_checkbox)
         bulk_layout.addWidget(self.selection_count)
         bulk_layout.addWidget(self.bulk_open_button)
+        bulk_layout.addWidget(self.bulk_stop_button)
+        bulk_layout.addWidget(self.bulk_health_button)
+        bulk_layout.addWidget(self.bulk_export_button)
         bulk_layout.addWidget(self.bulk_delete_button)
         bulk_layout.addWidget(self.bulk_edit_button)
         bulk_layout.addWidget(close_all_button)
@@ -424,19 +470,91 @@ class MainWindow(QMainWindow):
         visible = self.config_store.visible_columns(self.profile_table.default_visible_keys)
         self.profile_table.set_visible_columns(visible)
         self.profile_table.apply_column_widths(self.config_store.column_widths())
-        layout.addWidget(self.profile_table, 1)
+        self.profile_table.set_density(self.config_store.profile_density())
+        content = QHBoxLayout()
+        content.setContentsMargins(0, 0, 0, 0)
+        content.setSpacing(12)
+        table_column = QVBoxLayout()
+        table_column.setContentsMargins(0, 0, 0, 0)
+        table_column.setSpacing(8)
+        table_column.addWidget(self.profile_table, 1)
+        self.empty_profiles_hint = QLabel("No profiles match this view. Try clearing filters or create a new profile.")
+        self.empty_profiles_hint.setObjectName("hintLabel")
+        self.empty_profiles_hint.setWordWrap(True)
+        self.empty_profiles_hint.hide()
+        table_column.addWidget(self.empty_profiles_hint)
+        content.addLayout(table_column, 1)
+        content.addWidget(self._build_profile_preview_panel())
+        layout.addLayout(content, 1)
 
         self.select_all_checkbox.stateChanged.connect(self._toggle_all_profiles)
         self.bulk_open_button.clicked.connect(self.open_selected_profiles)
+        self.bulk_stop_button.clicked.connect(self.stop_selected_profiles)
+        self.bulk_health_button.clicked.connect(self.check_selected_profiles)
+        self.bulk_export_button.clicked.connect(self.export_selected_profile)
         self.bulk_delete_button.clicked.connect(self.delete_selected_profiles)
         self.bulk_edit_button.clicked.connect(self.bulk_edit_selected_profiles)
         create_batch_button.clicked.connect(self.create_profiles_batch)
         self.group_filter.currentIndexChanged.connect(self._filter_profiles)
         self.status_filter.currentIndexChanged.connect(self._filter_profiles)
         self.os_filter.currentIndexChanged.connect(self._filter_profiles)
+        self.quick_filter.currentIndexChanged.connect(self._filter_profiles)
+        self.tag_filter.currentIndexChanged.connect(self._filter_profiles)
+        self.density_input.currentIndexChanged.connect(self._profile_density_changed)
         self.pinned_filter.toggled.connect(self._filter_profiles)
         self._load_saved_views()
         return page
+
+    def _build_profile_preview_panel(self) -> QWidget:
+        panel = QFrame()
+        panel.setObjectName("profilePreviewPanel")
+        panel.setFixedWidth(318)
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
+        title = QLabel("Profile preview")
+        title.setObjectName("settingTitle")
+        self.preview_status = QLabel("Select a profile to see details")
+        self.preview_status.setObjectName("pageSubtitle")
+        self.preview_status.setWordWrap(True)
+        layout.addWidget(title)
+        layout.addWidget(self.preview_status)
+        self.preview_fields: dict[str, QLabel] = {}
+        for key, label in (
+            ("name", "Name"), ("group", "Group"), ("tags", "Tags"),
+            ("state", "State"), ("health", "Health"), ("proxy", "Proxy"),
+            ("os", "OS"), ("locale", "Locale"), ("timezone", "Timezone"),
+            ("seed", "Seed"), ("startup", "Startup"),
+        ):
+            row = QFrame()
+            row.setObjectName("previewRow")
+            row_layout = QVBoxLayout(row)
+            row_layout.setContentsMargins(10, 8, 10, 8)
+            row_layout.setSpacing(2)
+            caption = QLabel(label)
+            caption.setObjectName("previewCaption")
+            value = QLabel("—")
+            value.setObjectName("previewValue")
+            value.setWordWrap(True)
+            value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            row_layout.addWidget(caption)
+            row_layout.addWidget(value)
+            layout.addWidget(row)
+            self.preview_fields[key] = value
+        actions = QHBoxLayout()
+        self.preview_run_button = QPushButton("Run")
+        self.preview_run_button.setObjectName("bulkOpenButton")
+        self.preview_edit_button = QPushButton("Edit")
+        self.preview_health_button = QPushButton("Check")
+        self.preview_run_button.clicked.connect(self.run_preview_profile)
+        self.preview_edit_button.clicked.connect(self.edit_preview_profile)
+        self.preview_health_button.clicked.connect(self.check_preview_profile)
+        actions.addWidget(self.preview_run_button)
+        actions.addWidget(self.preview_edit_button)
+        actions.addWidget(self.preview_health_button)
+        layout.addLayout(actions)
+        layout.addStretch(1)
+        return panel
 
     def _new_data_page(self, title: str, subtitle: str, action_text: str | None = None, action=None):
         page = QWidget()
@@ -568,6 +686,15 @@ class MainWindow(QMainWindow):
         self.app_update_status = QLabel(tr(f"Current version: {APP_VERSION}"))
         self.app_update_status.setWordWrap(True)
         update_layout.addWidget(self.app_update_status)
+        self.app_update_asset_label = QLabel("Asset: not checked yet")
+        self.app_update_asset_label.setObjectName("hintLabel")
+        self.app_update_asset_label.setWordWrap(True)
+        update_layout.addWidget(self.app_update_asset_label)
+        self.app_update_notes = QLabel("Release notes will appear here after checking GitHub.")
+        self.app_update_notes.setObjectName("pageSubtitle")
+        self.app_update_notes.setWordWrap(True)
+        self.app_update_notes.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        update_layout.addWidget(self.app_update_notes)
         self.app_update_progress = QProgressBar()
         self.app_update_progress.setRange(0, 100)
         self.app_update_progress.setTextVisible(True)
@@ -580,8 +707,12 @@ class MainWindow(QMainWindow):
         self.install_app_update_button.setObjectName("primaryButton")
         self.install_app_update_button.clicked.connect(self.download_or_install_app_update)
         self.install_app_update_button.hide()
+        self.open_release_button = QPushButton("Open release page")
+        self.open_release_button.clicked.connect(self.open_latest_release_page)
+        self.open_release_button.hide()
         update_buttons.addWidget(self.check_app_update_button)
         update_buttons.addWidget(self.install_app_update_button)
+        update_buttons.addWidget(self.open_release_button)
         update_buttons.addStretch(1)
         update_layout.addLayout(update_buttons)
         layout.addWidget(update_card)
@@ -608,6 +739,14 @@ class MainWindow(QMainWindow):
         self._available_app_update = info
         self._downloaded_app_update = None
         self.task_center.finish_task("app-update-check", f"Latest: {info.version}")
+        url, sha256 = update_asset(info, self._installation_mode)
+        asset_name = Path(urlparse(url).path).name or "update package"
+        self.app_update_asset_label.setText(
+            f"Edition: {self._installation_mode.title()} · Asset: {asset_name}\n"
+            f"SHA-256: {sha256[:12]}...{sha256[-10:]} · verified after download"
+        )
+        self.app_update_notes.setText(info.notes or "No release notes were provided.")
+        self.open_release_button.show()
         if not is_newer_version(info.version, APP_VERSION):
             self.app_update_status.setText(tr(
                 f"You are up to date · version {APP_VERSION} is the latest version"
@@ -620,6 +759,11 @@ class MainWindow(QMainWindow):
         ))
         self.install_app_update_button.setText(tr("Update now"))
         self.install_app_update_button.show()
+
+    def open_latest_release_page(self) -> None:
+        info = self._available_app_update
+        version = info.version if info else APP_VERSION
+        QDesktopServices.openUrl(QUrl(f"https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/tag/v{version}"))
 
     def _app_update_failed(self, message: str) -> None:
         self.app_update_status.setText(tr(f"Update check failed · {message}"))
@@ -644,10 +788,25 @@ class MainWindow(QMainWindow):
         if QMessageBox.question(
             self,
             tr("Install update"),
-            tr(f"Download version {info.version} from GitHub now?"),
+            tr(f"Download version {info.version} from GitHub now?\n\nThe file will be verified by SHA-256 before install."),
             QMessageBox.Yes | QMessageBox.No,
         ) != QMessageBox.Yes:
             return
+        if QMessageBox.question(
+            self,
+            tr("Backup before update"),
+            tr("Create a full data backup before downloading the update?"),
+            QMessageBox.Yes | QMessageBox.No,
+        ) == QMessageBox.Yes:
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                backup_path = create_full_backup()
+                self.show_status(f"Backup created before update: {backup_path}")
+            except Exception as error:
+                self.show_error(f"Could not create update backup: {error}")
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
         url, sha256 = update_asset(info, self._installation_mode)
         self.install_app_update_button.setEnabled(False)
         self.check_app_update_button.setEnabled(False)
@@ -926,6 +1085,19 @@ class MainWindow(QMainWindow):
         )
         note = QLabel("Checks do not modify a profile fingerprint. They report configuration risks before launch.")
         note.setObjectName("pageSubtitle"); layout.addWidget(note)
+        health_cards = QGridLayout(); health_cards.setHorizontalSpacing(12); health_cards.setVerticalSpacing(12)
+        self.health_healthy_value = self._dashboard_card(health_cards, 0, "Healthy", "0", "Profiles with passed checks")
+        self.health_warning_value = self._dashboard_card(health_cards, 1, "Warnings", "0", "Profiles needing review")
+        self.health_failed_value = self._dashboard_card(health_cards, 2, "Failed", "0", "Profiles blocked by checks")
+        self.health_unknown_value = self._dashboard_card(health_cards, 3, "Not checked", "0", "Profiles without a recent check")
+        layout.addLayout(health_cards)
+        health_actions = QFrame(); health_actions.setObjectName("bulkActionBar")
+        health_action_layout = QHBoxLayout(health_actions); health_action_layout.setContentsMargins(12, 7, 12, 7)
+        health_action_layout.addWidget(QLabel("Health dashboard"))
+        open_profiles = QPushButton("Open Profiles"); open_profiles.clicked.connect(partial(self.pages.setCurrentIndex, PAGE_PROFILES))
+        warnings_view = QPushButton("Show warnings"); warnings_view.clicked.connect(self.show_health_warnings_view)
+        health_action_layout.addStretch(1); health_action_layout.addWidget(warnings_view); health_action_layout.addWidget(open_profiles)
+        layout.addWidget(health_actions)
         self.health_table = self._data_table(["Checked at", "Profile", "Result", "Summary", "Details"])
         header = self.health_table.horizontalHeader()
         for index, width in ((0, 165), (2, 105)):
@@ -1023,6 +1195,7 @@ class MainWindow(QMainWindow):
         self.profile_table.export_requested.connect(self.export_profile_by_id)
         self.profile_table.compatibility_requested.connect(self.show_compatibility_report)
         self.profile_table.snapshot_requested.connect(self.show_fingerprint_snapshot_report)
+        self.profile_table.itemSelectionChanged.connect(self._profile_row_selection_changed)
         self.controller.profiles_changed.connect(self.populate_profiles)
         self.controller.proxies_changed.connect(self.populate_proxies)
         self.controller.extensions_changed.connect(self.populate_extensions)
@@ -1058,14 +1231,28 @@ class MainWindow(QMainWindow):
     def populate_profiles(self, profiles: list[Profile]) -> None:
         self.profiles = profiles
         current_group = self.group_filter.currentData()
+        current_tag = self.tag_filter.currentData() if hasattr(self, "tag_filter") else ""
         groups = sorted({profile.group_name for profile in profiles if profile.group_name}, key=str.casefold)
+        tags = sorted({
+            tag.strip()
+            for profile in profiles
+            for tag in profile.tags.replace(";", ",").split(",")
+            if tag.strip()
+        }, key=str.casefold)
         blocker = QSignalBlocker(self.group_filter)
         self.group_filter.clear(); self.group_filter.addItem("All groups", "")
         for group in groups: self.group_filter.addItem(group, group)
         self.group_filter.setCurrentIndex(max(0, self.group_filter.findData(current_group)))
         del blocker
+        if hasattr(self, "tag_filter"):
+            blocker = QSignalBlocker(self.tag_filter)
+            self.tag_filter.clear(); self.tag_filter.addItem("All tags", "")
+            for tag in tags: self.tag_filter.addItem(tag, tag)
+            self.tag_filter.setCurrentIndex(max(0, self.tag_filter.findData(current_tag)))
+            del blocker
         self._filter_profiles()
         self._refresh_dashboard()
+        self._refresh_health_summary()
         translate_tree(self.profile_table)
 
     def _filter_profiles(self) -> None:
@@ -1073,17 +1260,35 @@ class MainWindow(QMainWindow):
         group = str(self.group_filter.currentData() or "")
         status = str(self.status_filter.currentData() or "")
         platform = str(self.os_filter.currentData() or "")
+        quick = str(self.quick_filter.currentData() or "") if hasattr(self, "quick_filter") else ""
+        tag = str(self.tag_filter.currentData() or "") if hasattr(self, "tag_filter") else ""
         visible = [profile for profile in self.profiles if not query or query in " ".join([
             profile.name, profile.notes, profile.group_name, profile.tags, profile.platform, profile.proxy or "", profile.locale, profile.status,
         ]).lower()]
         if group:
             visible = [profile for profile in visible if profile.group_name == group]
+        if tag:
+            visible = [
+                profile for profile in visible
+                if tag.casefold() in {item.strip().casefold() for item in profile.tags.replace(";", ",").split(",") if item.strip()}
+            ]
         if platform:
             visible = [profile for profile in visible if profile.platform == platform]
         if status == "attention":
             visible = [profile for profile in visible if profile.health_status in {"warning", "fail"}]
         elif status:
             visible = [profile for profile in visible if profile.status == status]
+        proxy_by_url = {proxy.url: proxy for proxy in self.proxies}
+        if quick == "recent":
+            visible = [profile for profile in visible if profile.last_used_at]
+        elif quick == "warning":
+            visible = [profile for profile in visible if profile.health_status in {"warning", "fail"}]
+        elif quick == "no_proxy":
+            visible = [profile for profile in visible if not profile.proxy]
+        elif quick == "proxy_failed":
+            visible = [profile for profile in visible if profile.proxy and proxy_by_url.get(profile.proxy) and proxy_by_url[profile.proxy].status == "dead"]
+        elif quick == "running":
+            visible = [profile for profile in visible if profile.status in {"running", "starting", "checking", "stopping"}]
         if self.pinned_filter.isChecked():
             visible = [profile for profile in visible if profile.pinned]
         sort_key = self.config_store.profile_sort()
@@ -1101,12 +1306,21 @@ class MainWindow(QMainWindow):
         elif sort_key == "proxy":
             visible.sort(key=lambda profile: (not bool(profile.proxy), (profile.proxy or "").casefold(), profile.name.casefold()))
         visible.sort(key=lambda profile: not profile.pinned)
+        self._last_visible_profiles = list(visible)
         self.profile_count.setText(tr(f"{len(visible)} profiles"))
         self.profile_table.set_profiles(visible)
+        self.empty_profiles_hint.setVisible(len(visible) == 0)
+        self._refresh_profile_preview()
 
     def _sort_profiles_changed(self, *_args) -> None:
         self.config_store.set_profile_sort(str(self.sort_input.currentData() or "created_desc"))
         self._filter_profiles()
+
+    def _profile_density_changed(self, *_args) -> None:
+        density = str(self.density_input.currentData() or "comfortable")
+        self.config_store.set_profile_density(density)
+        self.profile_table.set_density(density)
+        self.show_status(f"Table density set to {density}")
 
     def _schedule_column_width_save(self, widths: dict[str, int]) -> None:
         self._pending_widths = widths
@@ -1288,6 +1502,9 @@ class MainWindow(QMainWindow):
             "group": str(self.group_filter.currentData() or ""),
             "status": str(self.status_filter.currentData() or ""),
             "platform": str(self.os_filter.currentData() or ""),
+            "quick": str(self.quick_filter.currentData() or ""),
+            "tag": str(self.tag_filter.currentData() or ""),
+            "density": str(self.density_input.currentData() or "comfortable"),
             "pinned": self.pinned_filter.isChecked(),
             "sort": str(self.sort_input.currentData() or "created_desc"),
             "columns": [spec.key for index, spec in enumerate(PROFILE_COLUMNS) if not self.profile_table.isColumnHidden(index)],
@@ -1314,25 +1531,33 @@ class MainWindow(QMainWindow):
         if not 0 <= int(index) < len(views):
             return
         view = views[int(index)]
-        blockers = [QSignalBlocker(widget) for widget in (self.search_input, self.group_filter, self.status_filter, self.os_filter, self.pinned_filter, self.sort_input)]
+        blockers = [QSignalBlocker(widget) for widget in (self.search_input, self.group_filter, self.status_filter, self.os_filter, self.quick_filter, self.tag_filter, self.density_input, self.pinned_filter, self.sort_input)]
         self.search_input.setText(str(view.get("query") or ""))
         self.group_filter.setCurrentIndex(max(0, self.group_filter.findData(str(view.get("group") or ""))))
         self.status_filter.setCurrentIndex(max(0, self.status_filter.findData(str(view.get("status") or ""))))
         self.os_filter.setCurrentIndex(max(0, self.os_filter.findData(str(view.get("platform") or ""))))
+        self.quick_filter.setCurrentIndex(max(0, self.quick_filter.findData(str(view.get("quick") or ""))))
+        self.tag_filter.setCurrentIndex(max(0, self.tag_filter.findData(str(view.get("tag") or ""))))
+        self.density_input.setCurrentIndex(max(0, self.density_input.findData(str(view.get("density") or "comfortable"))))
         self.pinned_filter.setChecked(bool(view.get("pinned")))
         self.sort_input.setCurrentIndex(max(0, self.sort_input.findData(str(view.get("sort") or "created_desc"))))
         del blockers
         columns = view.get("columns")
         if isinstance(columns, list): self.profile_table.set_visible_columns([str(item) for item in columns])
+        self.config_store.set_profile_density(str(view.get("density") or "comfortable"))
+        self.profile_table.set_density(self.config_store.profile_density())
         self.config_store.set_profile_sort(str(view.get("sort") or "created_desc")); self._filter_profiles()
 
     def open_command_palette(self) -> None:
         commands = [
             ("create", "Create profile", "Ctrl+N"), ("batch", "Create batch", "Ctrl+Shift+N"),
             ("find", "Search profiles", "Ctrl+F"), ("run", "Run selected profiles", "Ctrl+Enter"),
-            ("edit", "Bulk edit selected", "Ctrl+Shift+B"), ("proxy", "Check all proxies", ""),
+            ("stop", "Stop selected profiles", ""), ("health", "Check selected profiles", ""),
+            ("edit", "Bulk edit selected", "Ctrl+Shift+B"), ("tag", "Add tag to selected", ""),
+            ("proxy", "Check all proxies", ""),
             ("dashboard", "Open Dashboard", "Ctrl+1"), ("profiles", "Open Profiles", "Ctrl+2"),
-            ("fingerprint", "Open Fingerprint Lab", ""), ("undo", "Undo", "Ctrl+Z"),
+            ("health_page", "Open Profile Health", ""), ("fingerprint", "Open Fingerprint Lab", ""),
+            ("updates", "Check app updates", ""), ("undo", "Undo", "Ctrl+Z"),
         ]
         dialog = CommandPaletteDialog(commands, self)
         if dialog.exec() != CommandPaletteDialog.Accepted:
@@ -1340,14 +1565,186 @@ class MainWindow(QMainWindow):
         actions = {
             "create": self.create_profile, "batch": self.create_profiles_batch,
             "find": self.focus_profile_search, "run": self.open_selected_profiles,
-            "edit": self.bulk_edit_selected_profiles, "proxy": self.controller.check_all_proxies,
+            "stop": self.stop_selected_profiles, "health": self.check_selected_profiles,
+            "edit": self.bulk_edit_selected_profiles, "tag": self.bulk_add_tag,
+            "proxy": self.controller.check_all_proxies,
             "dashboard": partial(self.pages.setCurrentIndex, PAGE_DASHBOARD),
             "profiles": partial(self.pages.setCurrentIndex, PAGE_PROFILES),
+            "health_page": partial(self.pages.setCurrentIndex, PAGE_HEALTH),
             "fingerprint": partial(self.pages.setCurrentIndex, PAGE_FINGERPRINT),
+            "updates": partial(self.pages.setCurrentIndex, PAGE_SETTINGS),
             "undo": self._undo_last_action,
         }
         action = actions.get(dialog.command_key)
         if action: action()
+
+    def _selected_or_current_profile_ids(self) -> list[str]:
+        if self._selected_profile_ids:
+            return list(dict.fromkeys(self._selected_profile_ids))
+        profile = self._current_table_profile()
+        return [profile.id] if profile else []
+
+    def _current_table_profile(self) -> Profile | None:
+        row = self.profile_table.currentRow()
+        if row < 0 or row >= len(self.profile_table.profiles):
+            return None
+        return self.profile_table.profiles[row]
+
+    def _profile_row_selection_changed(self) -> None:
+        self._refresh_profile_preview(self._current_table_profile())
+
+    def _refresh_profile_preview(self, profile: Profile | None = None) -> None:
+        if not hasattr(self, "preview_fields"):
+            return
+        profile = profile or self._current_table_profile()
+        if not profile:
+            self.preview_status.setText("Select a profile to see details")
+            for value in self.preview_fields.values():
+                value.setText("—")
+            self.preview_run_button.setEnabled(False)
+            self.preview_edit_button.setEnabled(False)
+            self.preview_health_button.setEnabled(False)
+            return
+        proxy = next((item for item in self.proxies if item.url == profile.proxy), None)
+        platform = {"windows": "Windows 11", "macos": "macOS", "linux": "Linux"}.get(profile.platform, profile.platform)
+        health = {"pass": "Healthy", "warning": "Needs attention", "fail": "Failed", "unknown": "Not checked"}.get(profile.health_status, profile.health_status)
+        proxy_text = "No proxy"
+        if profile.proxy:
+            proxy_text = proxy.name if proxy else "Custom proxy"
+            if proxy and proxy.location:
+                proxy_text += f" · {proxy.location}"
+            if proxy:
+                proxy_text += f" · {proxy.status}"
+        startup = profile.startup_url or self.config_store.default_startup_url() or "Blank tab"
+        self.preview_status.setText(f"{profile.status.title()} · {health}")
+        values = {
+            "name": profile.name,
+            "group": profile.group_name or "No group",
+            "tags": profile.tags or "No tags",
+            "state": profile.status,
+            "health": f"{health} · {profile.health_checked_at.replace('T', ' ')[:16] if profile.health_checked_at else 'not checked'}",
+            "proxy": proxy_text,
+            "os": f"{platform} · {profile.screen_size_label}",
+            "locale": profile.locale,
+            "timezone": profile.timezone,
+            "seed": str(profile.fingerprint_seed or "Auto") + (" · locked" if profile.seed_locked else ""),
+            "startup": startup,
+        }
+        for key, value in values.items():
+            self.preview_fields[key].setText(value)
+        running = profile.status in {"running", "starting", "checking", "stopping"}
+        self.preview_run_button.setText("Stop" if running else "Run")
+        self.preview_run_button.setEnabled(profile.status not in {"starting", "checking", "stopping"})
+        self.preview_edit_button.setEnabled(profile.status == "stopped")
+        self.preview_health_button.setEnabled(profile.id not in getattr(self.controller, "health_threads", {}))
+
+    def run_preview_profile(self) -> None:
+        profile = self._current_table_profile()
+        if not profile:
+            return
+        if profile.status == "running":
+            self.close_profile_by_id(profile.id)
+        else:
+            self.open_profile_by_id(profile.id)
+
+    def edit_preview_profile(self) -> None:
+        profile = self._current_table_profile()
+        if profile:
+            self.edit_profile_by_id(profile.id)
+
+    def check_preview_profile(self) -> None:
+        profile = self._current_table_profile()
+        if profile:
+            self.controller.check_profile_health(profile.id)
+
+    def stop_selected_profiles(self) -> None:
+        ids = self._selected_or_current_profile_ids()
+        stopped = 0
+        errors: list[str] = []
+        for profile_id in ids:
+            profile = self.controller.get_profile(profile_id)
+            if not profile or profile.status == "stopped":
+                continue
+            try:
+                self.controller.close_profile(profile_id, silent=True)
+                stopped += 1
+            except Exception as error:
+                errors.append(f"{profile.name}: {error}")
+        self.show_status(f"Stopping {stopped} profile(s)" if stopped else "No active selected profiles")
+        if errors:
+            self.show_error("\n".join(errors[:6]))
+
+    def check_selected_profiles(self) -> None:
+        ids = self._selected_or_current_profile_ids()
+        if not ids:
+            self.show_status("Select profiles to check")
+            return
+        for profile_id in ids:
+            self.controller.check_profile_health(profile_id)
+        self.show_status(f"Checking health for {len(ids)} profile(s)")
+
+    def export_selected_profile(self) -> None:
+        ids = self._selected_or_current_profile_ids()
+        if len(ids) != 1:
+            self.show_status("Select exactly one profile to export")
+            return
+        self.export_profile_by_id(ids[0])
+
+    def bulk_set_group(self) -> None:
+        ids = self._selected_or_current_profile_ids()
+        if not ids:
+            self.show_status("Select profiles first")
+            return
+        group, accepted = QInputDialog.getText(self, tr("Set group"), tr("Group name"))
+        if not accepted:
+            return
+        for profile_id in ids:
+            try:
+                self.controller.update_profile_metadata(profile_id, "group_name", group.strip())
+            except Exception as error:
+                self.show_error(str(error)); return
+        self.show_status(f"Updated group for {len(ids)} profile(s)")
+
+    def bulk_add_tag(self) -> None:
+        ids = self._selected_or_current_profile_ids()
+        if not ids:
+            self.show_status("Select profiles first")
+            return
+        tag, accepted = QInputDialog.getText(self, tr("Add tag"), tr("Tag"))
+        tag = tag.strip()
+        if not accepted or not tag:
+            return
+        for profile_id in ids:
+            profile = self.controller.get_profile(profile_id)
+            if not profile:
+                continue
+            tags = [item.strip() for item in profile.tags.replace(";", ",").split(",") if item.strip()]
+            if tag.casefold() not in {item.casefold() for item in tags}:
+                tags.append(tag)
+            self.controller.update_profile_metadata(profile_id, "tags", ", ".join(tags))
+        self.show_status(f"Added tag to {len(ids)} profile(s)")
+
+    def bulk_clear_tags(self) -> None:
+        ids = self._selected_or_current_profile_ids()
+        if not ids:
+            self.show_status("Select profiles first")
+            return
+        if QMessageBox.question(self, tr("Clear tags"), tr(f"Clear tags from {len(ids)} profile(s)?"), QMessageBox.Yes | QMessageBox.No) != QMessageBox.Yes:
+            return
+        for profile_id in ids:
+            self.controller.update_profile_metadata(profile_id, "tags", "")
+        self.show_status(f"Cleared tags from {len(ids)} profile(s)")
+
+    def show_group_tag_summary(self) -> None:
+        groups: dict[str, int] = {}
+        tags: dict[str, int] = {}
+        for profile in self.profiles:
+            groups[profile.group_name or "No group"] = groups.get(profile.group_name or "No group", 0) + 1
+            for tag in [item.strip() for item in profile.tags.replace(";", ",").split(",") if item.strip()]:
+                tags[tag] = tags.get(tag, 0) + 1
+        group_text = "\n".join(f"• {name}: {count}" for name, count in sorted(groups.items(), key=lambda item: item[0].casefold())) or "No groups"
+        tag_text = "\n".join(f"• {name}: {count}" for name, count in sorted(tags.items(), key=lambda item: item[0].casefold())) or "No tags"
+        QMessageBox.information(self, tr("Groups & Tags"), f"Groups\n{group_text}\n\nTags\n{tag_text}")
 
     def _toggle_all_profiles(self, state: int) -> None:
         # A user click may briefly enter the partial state on a tri-state box;
@@ -1359,6 +1756,9 @@ class MainWindow(QMainWindow):
         count = len(profile_ids)
         self.selection_count.setText(tr(f"{count} selected"))
         self.bulk_open_button.setEnabled(count > 0)
+        self.bulk_stop_button.setEnabled(count > 0)
+        self.bulk_health_button.setEnabled(count > 0)
+        self.bulk_export_button.setEnabled(count == 1)
         self.bulk_delete_button.setEnabled(count > 0)
         self.bulk_edit_button.setEnabled(count > 0)
 
@@ -1835,6 +2235,22 @@ class MainWindow(QMainWindow):
             for column, value in enumerate(values): self._set_item(self.health_table, row, column, value, column == 1)
             self.health_table.item(row, 2).setForeground(QColor(colors.get(str(record.get("status")), "#6b7280")))
         translate_tree(self.health_table)
+        self._refresh_health_summary(records)
+
+    def _refresh_health_summary(self, records: list[dict] | None = None) -> None:
+        if not hasattr(self, "health_healthy_value"):
+            return
+        statuses = [profile.health_status or "unknown" for profile in self.profiles]
+        self.health_healthy_value.setText(str(sum(status == "pass" for status in statuses)))
+        self.health_warning_value.setText(str(sum(status == "warning" for status in statuses)))
+        self.health_failed_value.setText(str(sum(status == "fail" for status in statuses)))
+        self.health_unknown_value.setText(str(sum(status not in {"pass", "warning", "fail"} for status in statuses)))
+
+    def show_health_warnings_view(self) -> None:
+        self.pages.setCurrentIndex(PAGE_PROFILES)
+        self.status_filter.setCurrentIndex(max(0, self.status_filter.findData("attention")))
+        self.quick_filter.setCurrentIndex(max(0, self.quick_filter.findData("warning")))
+        self._filter_profiles()
 
     def populate_activity(self, records: list[dict]) -> None:
         self.activity_records = records
@@ -2199,9 +2615,11 @@ class MainWindow(QMainWindow):
         for sequence, callback in (
             ("Ctrl+N", self.create_profile), ("Ctrl+Shift+N", self.create_profiles_batch),
             ("Ctrl+F", self.focus_profile_search), ("Ctrl+K", self.open_command_palette),
-            ("Ctrl+Enter", self.open_selected_profiles), ("Ctrl+Shift+B", self.bulk_edit_selected_profiles),
+            ("Ctrl+Enter", self.open_selected_profiles), ("Ctrl+R", self.open_selected_profiles),
+            ("Ctrl+H", self.check_selected_profiles), ("Ctrl+Shift+B", self.bulk_edit_selected_profiles),
             ("Ctrl+Z", self._undo_last_action), ("Ctrl+1", partial(self.pages.setCurrentIndex, PAGE_DASHBOARD)),
             ("Ctrl+2", partial(self.pages.setCurrentIndex, PAGE_PROFILES)),
+            ("Ctrl+,", partial(self.pages.setCurrentIndex, PAGE_SETTINGS)),
         ):
             shortcut = QShortcut(QKeySequence(sequence), self); shortcut.activated.connect(callback); self._shortcuts.append(shortcut)
         for sequence, callback in (("Delete", self.delete_selected_profiles), ("F2", self.rename_current_profile)):
@@ -2256,13 +2674,37 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         if hasattr(self, "sidebar") and self.width() < 1180 and not self._sidebar_collapsed:
             self._set_sidebar_collapsed(True, persist=False)
+        self._position_toast()
 
     def show_error(self, message: str) -> None:
         message = tr(message)
         QMessageBox.critical(self, tr("Error"), message); self.statusBar().showMessage(message, 8000)
 
     def show_status(self, message: str) -> None:
-        self.statusBar().showMessage(tr(message), 6000)
+        text = tr(message)
+        self.statusBar().showMessage(text, 6000)
+        self._show_toast(text)
+
+    def _show_toast(self, message: str) -> None:
+        if not hasattr(self, "toast_label"):
+            return
+        self.toast_label.setText(message)
+        self.toast_label.adjustSize()
+        self.toast_label.setFixedWidth(min(max(self.toast_label.sizeHint().width() + 20, 260), 520))
+        self.toast_label.setFixedHeight(max(42, self.toast_label.sizeHint().height() + 16))
+        self._position_toast()
+        self.toast_label.raise_()
+        self.toast_label.show()
+        QTimer.singleShot(3600, self.toast_label.hide)
+
+    def _position_toast(self) -> None:
+        if not hasattr(self, "toast_label"):
+            return
+        margin = 18
+        self.toast_label.move(
+            max(margin, self.width() - self.toast_label.width() - margin),
+            margin + 10,
+        )
 
     def closeEvent(self, event) -> None:
         self._flush_column_widths()

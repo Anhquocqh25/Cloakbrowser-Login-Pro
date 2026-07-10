@@ -42,6 +42,13 @@ QLabel#dashboardCardTitle { color: #6b7280; font-size: 12px; }
 QLabel#dashboardCardValue { color: #111827; font-size: 27px; font-weight: 700; }
 QLabel#dashboardCardSubtitle { color: #9ca3af; font-size: 11px; }
 QLabel#onboardingCheck { color: #176f60; background-color: #edf8f5; border-radius: 7px; padding: 10px; }
+QLabel#toastNotification {
+    background-color: #111827;
+    color: #ffffff;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-weight: 600;
+}
 
 QFrame#profilesToolbar {
     background-color: #ffffff;
@@ -163,6 +170,14 @@ QPushButton#toolbarIconButton, QToolButton#toolbarMoreButton {
     padding: 0;
 }
 QPushButton#toolbarIconButton:hover, QToolButton#toolbarMoreButton:hover { background-color: #f3f4f6; }
+QToolButton#groupTagButton {
+    background-color: #ffffff;
+    border: 1px solid #dfe3e8;
+    border-radius: 7px;
+    color: #374151;
+    padding: 7px 10px;
+}
+QToolButton#groupTagButton:hover { background-color: #f9fafb; border-color: #cbd2da; }
 QPushButton#columnsButton { border-color: #dfe3e8; color: #536071; padding: 8px 14px; }
 QPushButton#primaryButton { background-color: #20b89a; border-color: #20b89a; color: #ffffff; font-weight: 600; padding: 8px 16px; }
 QPushButton#primaryButton:hover { background-color: #169d83; border-color: #169d83; }
@@ -209,6 +224,26 @@ QHeaderView::section {
 QTableCornerButton::section { background-color: #f9fafb; border: none; border-bottom: 1px solid #e5e7eb; }
 QWidget#cellHolder { background-color: transparent; }
 QLabel#stateText { background-color: transparent; color: #374151; }
+QFrame#profilePreviewPanel {
+    background-color: #ffffff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+}
+QFrame#previewRow {
+    background-color: #f9fafb;
+    border: 1px solid #eef1f5;
+    border-radius: 8px;
+}
+QLabel#previewCaption {
+    color: #9ca3af;
+    background-color: transparent;
+    font-size: 11px;
+    font-weight: 650;
+}
+QLabel#previewValue {
+    color: #111827;
+    background-color: transparent;
+}
 QPushButton#profileSettingsButton { border-color: transparent; color: #6b7280; padding: 4px 7px; font-size: 12px; }
 QPushButton#profileSettingsButton:hover { background-color: #f3f4f6; color: #111827; }
 QToolButton#rowMoreButton { border-color: transparent; color: #6b7280; padding: 4px 5px; min-width: 24px; }

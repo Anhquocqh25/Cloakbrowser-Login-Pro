@@ -88,6 +88,13 @@ class ConfigStore:
     def set_profile_sort(self, sort_key: str) -> None:
         self.set("profiles.sort", sort_key)
 
+    def profile_density(self) -> str:
+        value = str(self.get("profiles.density", "comfortable") or "comfortable")
+        return value if value in {"compact", "comfortable", "wide"} else "comfortable"
+
+    def set_profile_density(self, density: str) -> None:
+        self.set("profiles.density", density if density in {"compact", "comfortable", "wide"} else "comfortable")
+
     def trash_retention_days(self) -> int:
         value = int(self.get("trash.retention_days", 15) or 15)
         return value if value in {7, 15, 30} else 15

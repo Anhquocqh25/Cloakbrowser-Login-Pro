@@ -1,8 +1,8 @@
 {
-  "version": "0.1.4",
-  "notes": "Recovery Center, advanced Compatibility Guard, User-Agent Manager for batch profiles, smarter Proxy Pool distribution, and detailed Launch Log.",
-  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.4/CloakBrowser-Login-0.1.4-Windows.zip",
-  "portable_sha256": "c97fd00f48f1ff99630dd9f709fed78cad9bca2b93a59f5ac8f67fe8a4aeb7b5",
-  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.4/CloakBrowser-Login-Pro-Setup-0.1.4-Windows.exe",
-  "installer_sha256": "85d7aa8d79ae741085a0613fd9d73d4f875aa4f12a1343eeabac607da5a7099c"
+  "version": "0.1.5",
+  "notes": "Profile Health Dashboard, advanced Update System, group and tag tools, profile preview panel, quick filters, table density, toast notifications, empty states, keyboard shortcuts, and UX Pack improvements.",
+  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.5/CloakBrowser-Login-0.1.5-Windows.zip",
+  "portable_sha256": "fa0eb947e36b01b2e52380af9875b30c4d7c8da3292b5ed5a2b82cc53acec8ce",
+  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.5/CloakBrowser-Login-Pro-Setup-0.1.5-Windows.exe",
+  "installer_sha256": "76408cccafe4e3b45ae8ddeb885546fc381517c57623b922372e15f031a83869"
 }

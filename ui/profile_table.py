@@ -116,6 +116,7 @@ class ProfileTable(QTableWidget):
         self._checked_profile_ids: set[str] = set()
         self._updating = False
         self._layout_updating = False
+        self._density = "comfortable"
         self.column_indexes = {spec.key: index for index, spec in enumerate(PROFILE_COLUMNS)}
         self._preferred_widths = {spec.key: spec.width for spec in PROFILE_COLUMNS}
         self._reflow_timer = QTimer(self)
@@ -173,9 +174,21 @@ class ProfileTable(QTableWidget):
         self.setRowCount(len(profiles))
         for row, profile in enumerate(profiles):
             self._populate_row(row, profile)
+        self._apply_density()
         self.verticalScrollBar().setValue(scroll_position)
         self._updating = False
         self.checked_profiles_changed.emit(self.checked_profile_ids())
+
+    def set_density(self, density: str) -> None:
+        self._density = density if density in {"compact", "comfortable", "wide"} else "comfortable"
+        self._apply_density()
+
+    def _apply_density(self) -> None:
+        heights = {"compact": 44, "comfortable": 52, "wide": 60}
+        height = heights.get(self._density, 52)
+        self.verticalHeader().setDefaultSectionSize(height)
+        for row in range(self.rowCount()):
+            self.setRowHeight(row, height)
 
     def checked_profile_ids(self) -> list[str]:
         return [profile.id for profile in self.profiles if profile.id in self._checked_profile_ids]
@@ -332,7 +345,7 @@ class ProfileTable(QTableWidget):
         self._set_item(row, "os", platform)
         self._set_item(row, "browser_version", "System Chrome" if profile.browser_engine == "chrome" else "146")
         health_label = {"pass": "Healthy", "warning": "Attention", "fail": "Failed", "unknown": "Not checked"}.get(profile.health_status, profile.health_status)
-        self._set_item(row, "health", health_label)
+        self.setCellWidget(row, self.column_indexes["health"], self._health_widget(profile.health_status, health_label))
         self._set_item(row, "last_used", profile.last_used_at.replace("T", " ")[:16] if profile.last_used_at else "Never")
         self._set_item(row, "proxy_type", proxy_type)
         self._set_item(row, "proxy_port", port)
@@ -415,6 +428,28 @@ class ProfileTable(QTableWidget):
         layout.addWidget(text_label)
         layout.addStretch(1)
         return widget
+
+    def _health_widget(self, status: str, label: str) -> QWidget:
+        colors = {
+            "pass": ("#0d8f78", "#eafaf6", "#bce9df"),
+            "warning": ("#b45309", "#fffbeb", "#fde68a"),
+            "fail": ("#c2414b", "#fff1f2", "#fecdd3"),
+            "unknown": ("#6b7280", "#f9fafb", "#e5e7eb"),
+        }
+        text, background, border = colors.get(status, colors["unknown"])
+        holder = QWidget()
+        holder.setObjectName("cellHolder")
+        layout = QHBoxLayout(holder)
+        layout.setContentsMargins(7, 3, 7, 3)
+        badge = QLabel(label)
+        badge.setObjectName("healthBadge")
+        badge.setStyleSheet(
+            f"QLabel#healthBadge {{ color: {text}; background-color: {background}; "
+            f"border: 1px solid {border}; border-radius: 8px; padding: 4px 8px; }}"
+        )
+        layout.addWidget(badge, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        layout.addStretch(1)
+        return holder
 
     def _start_inline_edit(self, row: int, column: int) -> None:
         if column in {

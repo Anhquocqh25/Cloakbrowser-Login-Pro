@@ -42,6 +42,7 @@ class ProfileDialog(QDialog):
         profile=None,
         proxies=None,
         default_startup_url: str = "",
+        defaults: dict[str, object] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Edit profile" if profile else "Create profile")
@@ -50,6 +51,7 @@ class ProfileDialog(QDialog):
         self.setMinimumSize(620, 640)
         self.proxies = proxies or []
         self.proxy_by_url = {proxy.url: proxy for proxy in self.proxies}
+        self.defaults = defaults or {}
 
         root_layout = QVBoxLayout(self)
         root_layout.setContentsMargins(26, 24, 26, 22)
@@ -190,8 +192,29 @@ class ProfileDialog(QDialog):
             self.user_agent_mode_input.setCurrentIndex(max(0, self.user_agent_mode_input.findData(ua_mode)))
             self.user_agent_input.setText(profile.user_agent)
             self.notes_input.setPlainText(profile.notes)
+        else:
+            self._apply_defaults()
         self._engine_changed()
         self._user_agent_mode_changed()
+
+    def _apply_defaults(self) -> None:
+        engine = str(self.defaults.get("browser_engine") or "cloak")
+        self.engine_input.setCurrentIndex(max(0, self.engine_input.findData(engine)))
+        platform = str(self.defaults.get("platform") or "windows")
+        if platform == "random":
+            platform = "windows"
+        self.platform_input.setCurrentIndex(max(0, self.platform_input.findData(platform)))
+        timezone = str(self.defaults.get("timezone") or DEFAULT_TIMEZONE)
+        locale = str(self.defaults.get("locale") or DEFAULT_LOCALE)
+        set_combo_value(self.timezone_input, timezone, timezone_label)
+        set_combo_value(self.locale_input, locale, locale_label)
+        try:
+            self.screen_width_input.setValue(int(self.defaults.get("screen_width") or 1200))
+            self.screen_height_input.setValue(int(self.defaults.get("screen_height") or 800))
+        except (TypeError, ValueError):
+            self.screen_width_input.setValue(1200)
+            self.screen_height_input.setValue(800)
+        self.auto_geoip_input.setChecked(bool(self.defaults.get("auto_geoip", True)))
 
     def _apply_saved_proxy(self) -> None:
         selected_url = self.saved_proxy_input.currentData()
@@ -262,4 +285,6 @@ class ProfileDialog(QDialog):
             ),
             "browser_engine": self.engine_input.currentData(),
             "startup_url": self.startup_url_input.text().strip(),
+            "group_name": str(self.defaults.get("group_name") or "").strip(),
+            "tags": str(self.defaults.get("tags") or "").strip(),
         }

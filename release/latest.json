@@ -1,8 +1,8 @@
 {
-  "version": "0.1.5",
-  "notes": "Profile Health Dashboard, advanced Update System, group and tag tools, profile preview panel, quick filters, table density, toast notifications, empty states, keyboard shortcuts, and UX Pack improvements.",
-  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.5/CloakBrowser-Login-0.1.5-Windows.zip",
-  "portable_sha256": "fa0eb947e36b01b2e52380af9875b30c4d7c8da3292b5ed5a2b82cc53acec8ce",
-  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.5/CloakBrowser-Login-Pro-Setup-0.1.5-Windows.exe",
-  "installer_sha256": "76408cccafe4e3b45ae8ddeb885546fc381517c57623b922372e15f031a83869"
+  "version": "0.1.6",
+  "notes": "Responsive profile filter bar, compact More Filters dialog, Settings Center, Profile Defaults, Proxy Settings, Fingerprint Guard Settings, Data and Backup Settings, and 0.1.6 UX refinements.",
+  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.6/CloakBrowser-Login-0.1.6-Windows.zip",
+  "portable_sha256": "dbde23aaf59a7c01c571fd3565a7f7855725c69aa8b70bf33e3fb4430f533cd7",
+  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.6/CloakBrowser-Login-Pro-Setup-0.1.6-Windows.exe",
+  "installer_sha256": "f831cc0253a18b191922d425a9aa0f51e19394cba4bddfa61274581db85f8b92"
 }

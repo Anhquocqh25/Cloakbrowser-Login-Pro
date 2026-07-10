@@ -170,6 +170,25 @@ QPushButton#toolbarIconButton, QToolButton#toolbarMoreButton {
     padding: 0;
 }
 QPushButton#toolbarIconButton:hover, QToolButton#toolbarMoreButton:hover { background-color: #f3f4f6; }
+QToolButton#profileFilterMoreButton {
+    background-color: #ffffff;
+    border: 1px solid #dfe3e8;
+    border-radius: 7px;
+    color: #374151;
+    padding: 7px 10px;
+}
+QToolButton#profileFilterMoreButton:hover { background-color: #f9fafb; border-color: #cbd2da; }
+QPushButton#secondarySmallButton {
+    background-color: #ffffff;
+    border-color: #e5e7eb;
+    color: #6b7280;
+    padding: 7px 11px;
+}
+QLabel#filterSummary {
+    color: #6b7280;
+    background-color: transparent;
+    padding-left: 4px;
+}
 QToolButton#groupTagButton {
     background-color: #ffffff;
     border: 1px solid #dfe3e8;
@@ -260,7 +279,23 @@ QMenu::separator { height: 1px; background-color: #e5e7eb; margin: 5px 8px; }
 
 QLabel#pageTitle { color: #111827; font-size: 24px; font-weight: 700; }
 QLabel#pageSubtitle { color: #6b7280; font-size: 13px; }
+QFrame#settingsShell { background-color: transparent; border: none; }
 QFrame#settingsCard { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 9px; }
+QFrame#settingsNav { background-color: #ffffff; border: 1px solid #e5e7eb; border-radius: 9px; }
+QPushButton#settingsNavButton {
+    background-color: transparent;
+    border: none;
+    border-radius: 7px;
+    color: #536071;
+    padding: 9px 11px;
+    text-align: left;
+}
+QPushButton#settingsNavButton:hover { background-color: #f9fafb; color: #111827; }
+QPushButton#settingsNavButton:checked {
+    background-color: #e6f7f3;
+    color: #0d8f78;
+    font-weight: 650;
+}
 QLabel#settingTitle { color: #111827; font-size: 16px; font-weight: 650; }
 QLabel#settingLabel { color: #9ca3af; font-size: 11px; padding-top: 8px; }
 QProgressBar {

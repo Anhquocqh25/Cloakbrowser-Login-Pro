@@ -11,14 +11,14 @@ from PySide6.QtCore import QProcess, QSignalBlocker, QSize, QTimer, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFont, QKeySequence, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout,
-    QComboBox, QFileDialog, QGridLayout, QHeaderView, QLabel, QLineEdit,
+    QComboBox, QFileDialog, QFormLayout, QGridLayout, QHeaderView, QLabel, QLineEdit,
     QInputDialog,
     QMainWindow, QMenu, QMessageBox, QPushButton,
-    QProgressBar, QStackedWidget, QTableWidget, QTableWidgetItem,
+    QProgressBar, QSpinBox, QStackedWidget, QTableWidget, QTableWidgetItem,
     QToolButton, QVBoxLayout, QWidget,
 )
 
-from config import APP_BASE_DIR, APP_VERSION, EXTENSION_STORAGE_DIR
+from config import APP_BASE_DIR, APP_VERSION, DEFAULT_LOCALE, DEFAULT_TIMEZONE, EXTENSION_STORAGE_DIR
 from controllers.profile_controller import ProfileController
 from models.bookmark import BookmarkRecord
 from models.extension import ExtensionRecord
@@ -38,10 +38,11 @@ from ui.modern_controls import ModernComboBox
 from ui.profile_table import PROFILE_COLUMNS, ProfileTable
 from ui.profile_editor_page import ProfileEditorPage
 from ui.task_center import TaskCenterPage
-from ui.ux_dialogs import BulkEditDialog, CommandPaletteDialog, OnboardingDialog, PresetChoiceDialog
+from ui.ux_dialogs import AdvancedFiltersDialog, BulkEditDialog, CommandPaletteDialog, OnboardingDialog, PresetChoiceDialog
 from views.manage_dialogs import BookmarkDialog, ProxyDialog
 from views.profile_dialog import ProfileDialog
 from utils.startup_url import normalize_startup_url
+from utils.geo_options import combo_value, populate_locale_combo, populate_timezone_combo
 from utils.i18n import set_language, tr, translate_tree
 from utils.flag_icon import country_flag_icon
 
@@ -392,34 +393,38 @@ class MainWindow(QMainWindow):
         self.density_input.setCurrentIndex(max(0, self.density_input.findData(self.config_store.profile_density())))
         self.density_input.setMinimumWidth(128)
         self.pinned_filter = QCheckBox("Pinned only")
-        group_tools = QToolButton()
-        group_tools.setObjectName("groupTagButton")
-        group_tools.setText("Group/Tag")
-        group_tools.setMinimumWidth(92)
-        group_tools.setPopupMode(QToolButton.InstantPopup)
-        group_menu = QMenu(group_tools)
-        group_menu.addAction("Set group for selection", self.bulk_set_group)
-        group_menu.addAction("Add tag to selection", self.bulk_add_tag)
-        group_menu.addAction("Clear tags from selection", self.bulk_clear_tags)
-        group_menu.addSeparator()
-        group_menu.addAction("Show group/tag summary", self.show_group_tag_summary)
-        group_tools.setMenu(group_menu)
         self.saved_view_input = ModernComboBox(); self.saved_view_input.setMinimumWidth(150)
         self.saved_view_input.currentIndexChanged.connect(self._apply_saved_view)
-        save_view = QPushButton("Save view"); save_view.clicked.connect(self.save_current_view)
-        delete_view = QPushButton("×"); delete_view.setToolTip("Delete selected view"); delete_view.setFixedWidth(34); delete_view.clicked.connect(self.delete_current_view)
+        self.more_filters_button = QToolButton()
+        self.more_filters_button.setObjectName("profileFilterMoreButton")
+        self.more_filters_button.setText("More filters")
+        self.more_filters_button.setPopupMode(QToolButton.MenuButtonPopup)
+        self.more_filters_button.clicked.connect(self.open_advanced_filters)
+        self.more_filters_button.setMinimumWidth(108)
+        more_filters_menu = QMenu(self.more_filters_button)
+        more_filters_menu.addAction("Advanced filters...", self.open_advanced_filters)
+        more_filters_menu.addSeparator()
+        more_filters_menu.addAction("Save current view", self.save_current_view)
+        more_filters_menu.addAction("Delete selected view", self.delete_current_view)
+        more_filters_menu.addSeparator()
+        more_filters_menu.addAction("Set group for selection", self.bulk_set_group)
+        more_filters_menu.addAction("Add tag to selection", self.bulk_add_tag)
+        more_filters_menu.addAction("Clear tags from selection", self.bulk_clear_tags)
+        more_filters_menu.addAction("Show group/tag summary", self.show_group_tag_summary)
+        self.more_filters_button.setMenu(more_filters_menu)
+        self.reset_filters_button = QPushButton("Reset")
+        self.reset_filters_button.setObjectName("secondarySmallButton")
+        self.reset_filters_button.clicked.connect(self.reset_profile_filters)
+        self.filter_summary = QLabel("No extra filters")
+        self.filter_summary.setObjectName("filterSummary")
+        self.filter_summary.setWordWrap(False)
         filter_layout.addWidget(QLabel("Filter"))
         filter_layout.addWidget(self.saved_view_input)
-        filter_layout.addWidget(save_view)
-        filter_layout.addWidget(delete_view)
-        filter_layout.addWidget(self.group_filter)
         filter_layout.addWidget(self.status_filter)
-        filter_layout.addWidget(self.os_filter)
         filter_layout.addWidget(self.quick_filter)
-        filter_layout.addWidget(self.tag_filter)
-        filter_layout.addWidget(self.density_input)
-        filter_layout.addWidget(self.pinned_filter)
-        filter_layout.addWidget(group_tools)
+        filter_layout.addWidget(self.more_filters_button)
+        filter_layout.addWidget(self.reset_filters_button)
+        filter_layout.addWidget(self.filter_summary, 1)
         filter_layout.addStretch(1)
         layout.addWidget(filters)
 
@@ -719,6 +724,354 @@ class MainWindow(QMainWindow):
         layout.addStretch(1)
         return page
 
+    def _build_settings_section_page(self, title: str, subtitle: str) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(12)
+        title_label = QLabel(title)
+        title_label.setObjectName("settingTitle")
+        subtitle_label = QLabel(subtitle)
+        subtitle_label.setObjectName("pageSubtitle")
+        subtitle_label.setWordWrap(True)
+        layout.addWidget(title_label)
+        layout.addWidget(subtitle_label)
+        return page, layout
+
+    def _settings_card(self) -> tuple[QFrame, QVBoxLayout]:
+        card = QFrame()
+        card.setObjectName("settingsCard")
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+        return card, layout
+
+    def _build_settings_page(self) -> QWidget:
+        page, layout = self._new_data_page("Settings", "Application, launch safety and profile defaults")
+        shell = QFrame()
+        shell.setObjectName("settingsShell")
+        shell_layout = QHBoxLayout(shell)
+        shell_layout.setContentsMargins(12, 12, 12, 12)
+        shell_layout.setSpacing(14)
+
+        nav = QFrame()
+        nav.setObjectName("settingsNav")
+        nav.setFixedWidth(185)
+        nav_layout = QVBoxLayout(nav)
+        nav_layout.setContentsMargins(6, 6, 6, 6)
+        nav_layout.setSpacing(6)
+        self.settings_nav_group = QButtonGroup(self)
+        self.settings_nav_group.setExclusive(True)
+        self.settings_stack = QStackedWidget()
+        sections = [
+            ("General", self._build_general_settings_section()),
+            ("Profile Defaults", self._build_profile_defaults_settings_section()),
+            ("Proxy", self._build_proxy_settings_section()),
+            ("Fingerprint Guard", self._build_fingerprint_guard_settings_section()),
+            ("Data & Backup", self._build_data_backup_settings_section()),
+            ("Updates", self._build_update_settings_section()),
+        ]
+        for index, (label, widget) in enumerate(sections):
+            button = QPushButton(label)
+            button.setObjectName("settingsNavButton")
+            button.setCheckable(True)
+            button.setMinimumHeight(38)
+            button.clicked.connect(partial(self.settings_stack.setCurrentIndex, index))
+            self.settings_nav_group.addButton(button)
+            nav_layout.addWidget(button)
+            self.settings_stack.addWidget(widget)
+            if index == 0:
+                button.setChecked(True)
+        nav_layout.addStretch(1)
+        shell_layout.addWidget(nav)
+        shell_layout.addWidget(self.settings_stack, 1)
+        layout.addWidget(shell, 1)
+        return page
+
+    def _build_general_settings_section(self) -> QWidget:
+        page, layout = self._build_settings_section_page("General", "Language, data directory and everyday app controls.")
+        card, card_layout = self._settings_card()
+        card_layout.addWidget(QLabel(f"Version {APP_VERSION}"))
+        path_label = QLabel("Profile data directory")
+        path_label.setObjectName("settingLabel")
+        card_layout.addWidget(path_label)
+        path_value = QLabel(str(APP_BASE_DIR))
+        path_value.setWordWrap(True)
+        path_value.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        card_layout.addWidget(path_value)
+        language_label = QLabel("Interface language")
+        language_label.setObjectName("settingLabel")
+        card_layout.addWidget(language_label)
+        language_row = QHBoxLayout()
+        self.language_input = ModernComboBox()
+        self.language_input.addItem("English", "en")
+        self.language_input.addItem("Tieng Viet", "vi")
+        self.language_input.setCurrentIndex(max(0, self.language_input.findData(self.config_store.language())))
+        apply_language = QPushButton("Apply & restart")
+        apply_language.setObjectName("primaryButton")
+        apply_language.clicked.connect(self._apply_interface_language)
+        language_row.addWidget(self.language_input, 1)
+        language_row.addWidget(apply_language)
+        card_layout.addLayout(language_row)
+        search_value = QLabel("Default search engine: DuckDuckGo. Applied through browser preferences, not extension injection.")
+        search_value.setWordWrap(True)
+        card_layout.addWidget(search_value)
+        experience_row = QHBoxLayout()
+        welcome_button = QPushButton("Show welcome guide")
+        welcome_button.clicked.connect(self.show_onboarding_again)
+        shortcuts_button = QPushButton("Open command palette")
+        shortcuts_button.clicked.connect(self.open_command_palette)
+        experience_row.addWidget(welcome_button)
+        experience_row.addWidget(shortcuts_button)
+        experience_row.addStretch(1)
+        card_layout.addLayout(experience_row)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _build_profile_defaults_settings_section(self) -> QWidget:
+        page, layout = self._build_settings_section_page("Profile Defaults", "Default values used by Create profile and Create batch.")
+        defaults = self.config_store.profile_defaults()
+        card, card_layout = self._settings_card()
+        form = QFormLayout()
+        form.setSpacing(12)
+        self.default_engine_input = ModernComboBox()
+        self.default_engine_input.addItem("CloakBrowser Clean 146", "cloak")
+        self.default_engine_input.addItem("Google Chrome Native", "chrome")
+        self.default_engine_input.setCurrentIndex(max(0, self.default_engine_input.findData(str(defaults["browser_engine"]))))
+        self.default_platform_input = ModernComboBox()
+        for label, value in (("Windows 11", "windows"), ("macOS", "macos"), ("Linux", "linux"), ("Random for batch", "random")):
+            self.default_platform_input.addItem(label, value)
+        self.default_platform_input.setCurrentIndex(max(0, self.default_platform_input.findData(str(defaults["platform"]))))
+        self.default_timezone_input = ModernComboBox()
+        populate_timezone_combo(self.default_timezone_input, str(defaults["timezone"]))
+        self.default_locale_input = ModernComboBox()
+        populate_locale_combo(self.default_locale_input, str(defaults["locale"]))
+        self.default_width_input = QSpinBox()
+        self.default_width_input.setRange(320, 10000)
+        self.default_width_input.setValue(int(defaults["screen_width"]))
+        self.default_height_input = QSpinBox()
+        self.default_height_input.setRange(320, 10000)
+        self.default_height_input.setValue(int(defaults["screen_height"]))
+        self.default_auto_geoip_input = QCheckBox("Match timezone, locale and WebRTC with proxy by default")
+        self.default_auto_geoip_input.setChecked(bool(defaults["auto_geoip"]))
+        self.default_group_input = QLineEdit(str(defaults.get("group_name") or ""))
+        self.default_group_input.setPlaceholderText("Example: Facebook US")
+        self.default_tags_input = QLineEdit(str(defaults.get("tags") or ""))
+        self.default_tags_input.setPlaceholderText("Comma-separated tags")
+        form.addRow("Browser engine", self.default_engine_input)
+        form.addRow("OS / platform", self.default_platform_input)
+        form.addRow("Timezone", self.default_timezone_input)
+        form.addRow("Language / locale", self.default_locale_input)
+        form.addRow("Screen width", self.default_width_input)
+        form.addRow("Screen height", self.default_height_input)
+        form.addRow("Proxy sync", self.default_auto_geoip_input)
+        form.addRow("Default group", self.default_group_input)
+        form.addRow("Default tags", self.default_tags_input)
+        card_layout.addLayout(form)
+        save = QPushButton("Save profile defaults")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self.save_profile_defaults_settings)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(save)
+        card_layout.addLayout(row)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _build_proxy_settings_section(self) -> QWidget:
+        page, layout = self._build_settings_section_page("Proxy", "Safety checks before browser profiles launch.")
+        card, card_layout = self._settings_card()
+        self.proxy_check_before_run_input = QCheckBox("Check assigned proxy before opening a profile")
+        self.proxy_check_before_run_input.setChecked(self.config_store.proxy_check_before_run())
+        self.warn_no_proxy_input = QCheckBox("Warn before opening profiles without proxy")
+        self.warn_no_proxy_input.setChecked(self.config_store.warn_profiles_without_proxy())
+        self.settings_proxy_pool_enabled = QCheckBox("Enable Smart Proxy Pool")
+        self.settings_proxy_pool_enabled.setChecked(self.config_store.proxy_pool_enabled())
+        self.settings_proxy_pool_interval = ModernComboBox()
+        for label, value in (("Every 5 minutes", 5), ("Every 15 minutes", 15), ("Every 30 minutes", 30), ("Every hour", 60), ("Every 3 hours", 180)):
+            self.settings_proxy_pool_interval.addItem(label, value)
+        self.settings_proxy_pool_interval.setCurrentIndex(max(0, self.settings_proxy_pool_interval.findData(self.config_store.proxy_pool_interval_minutes())))
+        card_layout.addWidget(self.proxy_check_before_run_input)
+        card_layout.addWidget(self.warn_no_proxy_input)
+        pool_row = QHBoxLayout()
+        pool_row.addWidget(self.settings_proxy_pool_enabled)
+        pool_row.addWidget(self.settings_proxy_pool_interval)
+        pool_row.addStretch(1)
+        card_layout.addLayout(pool_row)
+        save = QPushButton("Save proxy settings")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self.save_proxy_settings)
+        actions = QHBoxLayout()
+        actions.addStretch(1)
+        actions.addWidget(save)
+        card_layout.addLayout(actions)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _build_fingerprint_guard_settings_section(self) -> QWidget:
+        page, layout = self._build_settings_section_page("Fingerprint Guard", "Choose how strictly the app blocks risky profile launches.")
+        card, card_layout = self._settings_card()
+        form = QFormLayout()
+        self.compatibility_guard_mode_input = ModernComboBox()
+        self.compatibility_guard_mode_input.addItem("Block risky launches", "block")
+        self.compatibility_guard_mode_input.addItem("Warn only", "warn")
+        self.compatibility_guard_mode_input.addItem("Off", "off")
+        self.compatibility_guard_mode_input.setCurrentIndex(max(0, self.compatibility_guard_mode_input.findData(self.config_store.compatibility_guard_mode())))
+        self.auto_snapshot_on_first_run_input = QCheckBox("Create a fingerprint baseline snapshot on first run")
+        self.auto_snapshot_on_first_run_input.setChecked(self.config_store.auto_snapshot_on_first_run())
+        form.addRow("Guard mode", self.compatibility_guard_mode_input)
+        form.addRow("Baseline", self.auto_snapshot_on_first_run_input)
+        card_layout.addLayout(form)
+        hint = QLabel("Recommended: keep Guard mode on Block and baseline snapshots enabled for consistency checks.")
+        hint.setObjectName("hintLabel")
+        hint.setWordWrap(True)
+        card_layout.addWidget(hint)
+        save = QPushButton("Save fingerprint guard")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self.save_fingerprint_guard_settings)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(save)
+        card_layout.addLayout(row)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _build_data_backup_settings_section(self) -> QWidget:
+        page, layout = self._build_settings_section_page("Data & Backup", "Extra protection for profile data, update installs and bulk actions.")
+        card, card_layout = self._settings_card()
+        self.settings_auto_backup_input = QCheckBox("Automatic backup")
+        self.settings_auto_backup_input.setChecked(self.config_store.automatic_backup_enabled())
+        self.settings_backup_interval = ModernComboBox()
+        for label, value in (("Daily", 1), ("Every 3 days", 3), ("Weekly", 7)):
+            self.settings_backup_interval.addItem(label, value)
+        self.settings_backup_interval.setCurrentIndex(max(0, self.settings_backup_interval.findData(self.config_store.backup_interval_days())))
+        self.backup_before_update_input = QCheckBox("Create backup before app updates")
+        self.backup_before_update_input.setChecked(self.config_store.backup_before_update())
+        self.backup_before_bulk_delete_input = QCheckBox("Create backup before bulk move to Trash")
+        self.backup_before_bulk_delete_input.setChecked(self.config_store.backup_before_bulk_delete())
+        backup_row = QHBoxLayout()
+        backup_row.addWidget(self.settings_auto_backup_input)
+        backup_row.addWidget(self.settings_backup_interval)
+        backup_row.addStretch(1)
+        card_layout.addLayout(backup_row)
+        card_layout.addWidget(self.backup_before_update_input)
+        card_layout.addWidget(self.backup_before_bulk_delete_input)
+        buttons = QHBoxLayout()
+        open_backup = QPushButton("Open Backup & Restore")
+        open_backup.clicked.connect(partial(self.pages.setCurrentIndex, PAGE_BACKUP))
+        save = QPushButton("Save data settings")
+        save.setObjectName("primaryButton")
+        save.clicked.connect(self.save_data_backup_settings)
+        buttons.addWidget(open_backup)
+        buttons.addStretch(1)
+        buttons.addWidget(save)
+        card_layout.addLayout(buttons)
+        layout.addWidget(card)
+        layout.addStretch(1)
+        return page
+
+    def _build_update_settings_section(self) -> QWidget:
+        page, layout = self._build_settings_section_page("Updates", "Check GitHub releases and install verified update packages.")
+        update_card, update_layout = self._settings_card()
+        mode_text = {
+            "installed": "Installed edition - updates use the Windows installer",
+            "portable": "Portable edition - updates replace only application files",
+            "development": "Development mode - update checks are available for testing",
+        }[self._installation_mode]
+        self.app_update_mode_label = QLabel(mode_text)
+        self.app_update_mode_label.setObjectName("pageSubtitle")
+        self.app_update_mode_label.setWordWrap(True)
+        update_layout.addWidget(self.app_update_mode_label)
+        self.app_update_status = QLabel(tr(f"Current version: {APP_VERSION}"))
+        self.app_update_status.setWordWrap(True)
+        update_layout.addWidget(self.app_update_status)
+        self.app_update_asset_label = QLabel("Asset: not checked yet")
+        self.app_update_asset_label.setObjectName("hintLabel")
+        self.app_update_asset_label.setWordWrap(True)
+        update_layout.addWidget(self.app_update_asset_label)
+        self.app_update_notes = QLabel("Release notes will appear here after checking GitHub.")
+        self.app_update_notes.setObjectName("pageSubtitle")
+        self.app_update_notes.setWordWrap(True)
+        self.app_update_notes.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        update_layout.addWidget(self.app_update_notes)
+        self.app_update_progress = QProgressBar()
+        self.app_update_progress.setRange(0, 100)
+        self.app_update_progress.setTextVisible(True)
+        self.app_update_progress.hide()
+        update_layout.addWidget(self.app_update_progress)
+        update_buttons = QHBoxLayout()
+        self.check_app_update_button = QPushButton("Check for updates")
+        self.check_app_update_button.clicked.connect(self.check_app_update)
+        self.install_app_update_button = QPushButton("Update now")
+        self.install_app_update_button.setObjectName("primaryButton")
+        self.install_app_update_button.clicked.connect(self.download_or_install_app_update)
+        self.install_app_update_button.hide()
+        self.open_release_button = QPushButton("Open release page")
+        self.open_release_button.clicked.connect(self.open_latest_release_page)
+        self.open_release_button.hide()
+        update_buttons.addWidget(self.check_app_update_button)
+        update_buttons.addWidget(self.install_app_update_button)
+        update_buttons.addWidget(self.open_release_button)
+        update_buttons.addStretch(1)
+        update_layout.addLayout(update_buttons)
+        layout.addWidget(update_card)
+        layout.addStretch(1)
+        return page
+
+    def save_profile_defaults_settings(self) -> None:
+        defaults = {
+            "browser_engine": str(self.default_engine_input.currentData() or "cloak"),
+            "platform": str(self.default_platform_input.currentData() or "windows"),
+            "timezone": combo_value(self.default_timezone_input, DEFAULT_TIMEZONE),
+            "locale": combo_value(self.default_locale_input, DEFAULT_LOCALE),
+            "screen_width": int(self.default_width_input.value()),
+            "screen_height": int(self.default_height_input.value()),
+            "auto_geoip": self.default_auto_geoip_input.isChecked(),
+            "group_name": self.default_group_input.text().strip(),
+            "tags": self.default_tags_input.text().strip(),
+        }
+        self.config_store.set_profile_defaults(defaults)
+        self.show_status("Profile defaults saved")
+
+    def save_proxy_settings(self) -> None:
+        self.config_store.set_proxy_check_before_run(self.proxy_check_before_run_input.isChecked())
+        self.config_store.set_warn_profiles_without_proxy(self.warn_no_proxy_input.isChecked())
+        self.config_store.set_proxy_pool_enabled(self.settings_proxy_pool_enabled.isChecked())
+        self.config_store.set_proxy_pool_interval_minutes(int(self.settings_proxy_pool_interval.currentData() or 30))
+        if hasattr(self, "proxy_pool_enabled"):
+            blocker = QSignalBlocker(self.proxy_pool_enabled)
+            self.proxy_pool_enabled.setChecked(self.config_store.proxy_pool_enabled())
+            del blocker
+        if hasattr(self, "proxy_pool_interval"):
+            blocker = QSignalBlocker(self.proxy_pool_interval)
+            self.proxy_pool_interval.setCurrentIndex(max(0, self.proxy_pool_interval.findData(self.config_store.proxy_pool_interval_minutes())))
+            del blocker
+        self.show_status("Proxy settings saved")
+
+    def save_fingerprint_guard_settings(self) -> None:
+        self.config_store.set_compatibility_guard_mode(str(self.compatibility_guard_mode_input.currentData() or "block"))
+        self.config_store.set_auto_snapshot_on_first_run(self.auto_snapshot_on_first_run_input.isChecked())
+        self.show_status("Fingerprint Guard settings saved")
+
+    def save_data_backup_settings(self) -> None:
+        self.config_store.set_automatic_backup_enabled(self.settings_auto_backup_input.isChecked())
+        self.config_store.set_backup_interval_days(int(self.settings_backup_interval.currentData() or 1))
+        self.config_store.set_backup_before_update(self.backup_before_update_input.isChecked())
+        self.config_store.set_backup_before_bulk_delete(self.backup_before_bulk_delete_input.isChecked())
+        if hasattr(self, "auto_backup_checkbox"):
+            blocker = QSignalBlocker(self.auto_backup_checkbox)
+            self.auto_backup_checkbox.setChecked(self.config_store.automatic_backup_enabled())
+            del blocker
+        if hasattr(self, "auto_backup_interval"):
+            blocker = QSignalBlocker(self.auto_backup_interval)
+            self.auto_backup_interval.setCurrentIndex(max(0, self.auto_backup_interval.findData(self.config_store.backup_interval_days())))
+            del blocker
+        self.show_status("Data and backup settings saved")
+
     def check_app_update(self) -> None:
         if self._update_check_thread is not None:
             self.show_status("An update check is already running")
@@ -792,12 +1145,7 @@ class MainWindow(QMainWindow):
             QMessageBox.Yes | QMessageBox.No,
         ) != QMessageBox.Yes:
             return
-        if QMessageBox.question(
-            self,
-            tr("Backup before update"),
-            tr("Create a full data backup before downloading the update?"),
-            QMessageBox.Yes | QMessageBox.No,
-        ) == QMessageBox.Yes:
+        if self.config_store.backup_before_update():
             QApplication.setOverrideCursor(Qt.WaitCursor)
             try:
                 backup_path = create_full_backup()
@@ -1310,6 +1658,7 @@ class MainWindow(QMainWindow):
         self.profile_count.setText(tr(f"{len(visible)} profiles"))
         self.profile_table.set_profiles(visible)
         self.empty_profiles_hint.setVisible(len(visible) == 0)
+        self._update_filter_summary()
         self._refresh_profile_preview()
 
     def _sort_profiles_changed(self, *_args) -> None:
@@ -1320,7 +1669,105 @@ class MainWindow(QMainWindow):
         density = str(self.density_input.currentData() or "comfortable")
         self.config_store.set_profile_density(density)
         self.profile_table.set_density(density)
+        self._update_filter_summary()
         self.show_status(f"Table density set to {density}")
+
+    @staticmethod
+    def _combo_values(combo: QComboBox) -> list[str]:
+        return [str(combo.itemData(index) or "") for index in range(combo.count()) if str(combo.itemData(index) or "")]
+
+    @staticmethod
+    def _combo_current_label(combo: QComboBox) -> str:
+        return str(combo.currentText() or "").strip()
+
+    def _current_filter_state(self) -> dict[str, object]:
+        return {
+            "group": str(self.group_filter.currentData() or ""),
+            "status": str(self.status_filter.currentData() or ""),
+            "platform": str(self.os_filter.currentData() or ""),
+            "quick": str(self.quick_filter.currentData() or ""),
+            "tag": str(self.tag_filter.currentData() or ""),
+            "density": str(self.density_input.currentData() or "comfortable"),
+            "pinned": self.pinned_filter.isChecked(),
+        }
+
+    def open_advanced_filters(self) -> None:
+        groups = self._combo_values(self.group_filter)
+        tags = self._combo_values(self.tag_filter)
+        dialog = AdvancedFiltersDialog(groups, tags, self._current_filter_state(), self)
+        if dialog.exec() != AdvancedFiltersDialog.Accepted:
+            return
+        filters = dialog.filters()
+        blockers = [
+            QSignalBlocker(self.group_filter),
+            QSignalBlocker(self.os_filter),
+            QSignalBlocker(self.tag_filter),
+            QSignalBlocker(self.density_input),
+            QSignalBlocker(self.pinned_filter),
+        ]
+        self.group_filter.setCurrentIndex(max(0, self.group_filter.findData(str(filters["group"]))))
+        self.os_filter.setCurrentIndex(max(0, self.os_filter.findData(str(filters["platform"]))))
+        self.tag_filter.setCurrentIndex(max(0, self.tag_filter.findData(str(filters["tag"]))))
+        self.density_input.setCurrentIndex(max(0, self.density_input.findData(str(filters["density"]))))
+        self.pinned_filter.setChecked(bool(filters["pinned"]))
+        del blockers
+        density = str(self.density_input.currentData() or "comfortable")
+        self.config_store.set_profile_density(density)
+        self.profile_table.set_density(density)
+        self._filter_profiles()
+
+    def reset_profile_filters(self) -> None:
+        blockers = [
+            QSignalBlocker(self.search_input),
+            QSignalBlocker(self.saved_view_input),
+            QSignalBlocker(self.group_filter),
+            QSignalBlocker(self.status_filter),
+            QSignalBlocker(self.os_filter),
+            QSignalBlocker(self.quick_filter),
+            QSignalBlocker(self.tag_filter),
+            QSignalBlocker(self.density_input),
+            QSignalBlocker(self.pinned_filter),
+        ]
+        self.search_input.clear()
+        self.saved_view_input.setCurrentIndex(0)
+        self.group_filter.setCurrentIndex(0)
+        self.status_filter.setCurrentIndex(0)
+        self.os_filter.setCurrentIndex(0)
+        self.quick_filter.setCurrentIndex(0)
+        self.tag_filter.setCurrentIndex(0)
+        self.density_input.setCurrentIndex(max(0, self.density_input.findData("comfortable")))
+        self.pinned_filter.setChecked(False)
+        del blockers
+        self.config_store.set_profile_density("comfortable")
+        self.profile_table.set_density("comfortable")
+        self._filter_profiles()
+        self.show_status("Profile filters cleared")
+
+    def _update_filter_summary(self) -> None:
+        if not hasattr(self, "filter_summary"):
+            return
+        active: list[str] = []
+        if self.search_input.text().strip():
+            active.append("Search")
+        if self.group_filter.currentData():
+            active.append(f"Group: {self._combo_current_label(self.group_filter)}")
+        if self.os_filter.currentData():
+            active.append(f"OS: {self._combo_current_label(self.os_filter)}")
+        if self.tag_filter.currentData():
+            active.append(f"Tag: {self._combo_current_label(self.tag_filter)}")
+        if self.status_filter.currentData():
+            active.append(f"State: {self._combo_current_label(self.status_filter)}")
+        if self.quick_filter.currentData():
+            active.append(f"Quick: {self._combo_current_label(self.quick_filter)}")
+        if self.pinned_filter.isChecked():
+            active.append("Pinned")
+        density = str(self.density_input.currentData() or "comfortable")
+        if density != "comfortable":
+            active.append(f"Density: {self._combo_current_label(self.density_input)}")
+        if active:
+            self.filter_summary.setText("Active: " + "  |  ".join(active[:4]) + (f"  +{len(active) - 4}" if len(active) > 4 else ""))
+        else:
+            self.filter_summary.setText("No extra filters")
 
     def _schedule_column_width_save(self, widths: dict[str, int]) -> None:
         self._pending_widths = widths
@@ -1342,11 +1789,15 @@ class MainWindow(QMainWindow):
         dialog.exec()
         apply_visibility(dialog.visible_keys())
 
+    def _profile_defaults_payload(self) -> dict[str, object]:
+        return self.config_store.profile_defaults()
+
     def create_profile(self) -> None:
         dialog = ProfileDialog(
             self,
             proxies=self.proxies,
             default_startup_url=self.config_store.default_startup_url(),
+            defaults=self._profile_defaults_payload(),
         )
         if dialog.exec() == ProfileDialog.Accepted:
             try: self.controller.create_profile(**dialog.get_payload())
@@ -1357,6 +1808,7 @@ class MainWindow(QMainWindow):
             self,
             self.proxies,
             default_startup_url=self.config_store.default_startup_url(),
+            defaults=self._profile_defaults_payload(),
         )
         if dialog.exec() != BatchCreateDialog.Accepted:
             return
@@ -1779,7 +2231,7 @@ class MainWindow(QMainWindow):
             self.show_status("No ready profiles selected")
             return
         direct_count = sum(1 for profile in profiles if not profile.proxy)
-        if direct_count:
+        if direct_count and self.config_store.warn_profiles_without_proxy():
             answer = QMessageBox.warning(
                 self,
                 "Profiles without proxy",
@@ -1820,6 +2272,17 @@ class MainWindow(QMainWindow):
         )
         if answer != QMessageBox.Yes:
             return
+
+        if self.config_store.backup_before_bulk_delete():
+            QApplication.setOverrideCursor(Qt.WaitCursor)
+            try:
+                backup_path = create_full_backup()
+                self.show_status(f"Safety backup created before bulk Trash: {backup_path}")
+            except Exception as error:
+                self.show_error(f"Could not create safety backup: {error}")
+                return
+            finally:
+                QApplication.restoreOverrideCursor()
 
         errors: list[str] = []
         for profile in profiles:
@@ -1887,7 +2350,7 @@ class MainWindow(QMainWindow):
     def open_profile_by_id(self, profile_id: str) -> None:
         profile = self.controller.get_profile(profile_id)
         if not profile: return self.show_error("Profile not found")
-        if not profile.proxy:
+        if not profile.proxy and self.config_store.warn_profiles_without_proxy():
             answer = QMessageBox.warning(self, "No proxy", "This profile will use the machine IP. Continue?", QMessageBox.Yes | QMessageBox.Cancel)
             if answer != QMessageBox.Yes: return
         try: self.controller.open_profile(profile_id)

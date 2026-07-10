@@ -95,6 +95,38 @@ class ConfigStore:
     def set_profile_density(self, density: str) -> None:
         self.set("profiles.density", density if density in {"compact", "comfortable", "wide"} else "comfortable")
 
+    def profile_defaults(self) -> dict[str, Any]:
+        value = self.get("profiles.defaults", {})
+        if not isinstance(value, dict):
+            value = {}
+        defaults = {
+            "browser_engine": "cloak",
+            "platform": "windows",
+            "timezone": "Asia/Bangkok",
+            "locale": "en-US",
+            "screen_width": 1200,
+            "screen_height": 800,
+            "auto_geoip": True,
+            "group_name": "",
+            "tags": "",
+        }
+        defaults.update({str(key): item for key, item in value.items()})
+        if defaults["browser_engine"] not in {"cloak", "chrome"}:
+            defaults["browser_engine"] = "cloak"
+        if defaults["platform"] not in {"windows", "macos", "linux", "random"}:
+            defaults["platform"] = "windows"
+        try:
+            defaults["screen_width"] = max(320, min(10000, int(defaults["screen_width"])))
+            defaults["screen_height"] = max(320, min(10000, int(defaults["screen_height"])))
+        except (TypeError, ValueError):
+            defaults["screen_width"] = 1200
+            defaults["screen_height"] = 800
+        defaults["auto_geoip"] = bool(defaults.get("auto_geoip", True))
+        return defaults
+
+    def set_profile_defaults(self, defaults: dict[str, Any]) -> None:
+        self.set("profiles.defaults", dict(defaults))
+
     def trash_retention_days(self) -> int:
         value = int(self.get("trash.retention_days", 15) or 15)
         return value if value in {7, 15, 30} else 15
@@ -114,6 +146,18 @@ class ConfigStore:
 
     def set_backup_interval_days(self, days: int) -> None:
         self.set("backup.interval_days", days if days in {1, 3, 7} else 1)
+
+    def backup_before_update(self) -> bool:
+        return bool(self.get("backup.before_update", True))
+
+    def set_backup_before_update(self, enabled: bool) -> None:
+        self.set("backup.before_update", bool(enabled))
+
+    def backup_before_bulk_delete(self) -> bool:
+        return bool(self.get("backup.before_bulk_delete", True))
+
+    def set_backup_before_bulk_delete(self, enabled: bool) -> None:
+        self.set("backup.before_bulk_delete", bool(enabled))
 
     def last_backup_at(self) -> str:
         return str(self.get("backup.last_at", "") or "")
@@ -177,3 +221,28 @@ class ConfigStore:
 
     def set_proxy_pool_interval_minutes(self, minutes: int) -> None:
         self.set("proxy_pool.interval_minutes", minutes if minutes in {5, 15, 30, 60, 180} else 30)
+
+    def proxy_check_before_run(self) -> bool:
+        return bool(self.get("proxy.check_before_run", True))
+
+    def set_proxy_check_before_run(self, enabled: bool) -> None:
+        self.set("proxy.check_before_run", bool(enabled))
+
+    def warn_profiles_without_proxy(self) -> bool:
+        return bool(self.get("proxy.warn_without_proxy", True))
+
+    def set_warn_profiles_without_proxy(self, enabled: bool) -> None:
+        self.set("proxy.warn_without_proxy", bool(enabled))
+
+    def compatibility_guard_mode(self) -> str:
+        value = str(self.get("fingerprint.compatibility_guard_mode", "block") or "block")
+        return value if value in {"block", "warn", "off"} else "block"
+
+    def set_compatibility_guard_mode(self, mode: str) -> None:
+        self.set("fingerprint.compatibility_guard_mode", mode if mode in {"block", "warn", "off"} else "block")
+
+    def auto_snapshot_on_first_run(self) -> bool:
+        return bool(self.get("fingerprint.auto_snapshot_on_first_run", True))
+
+    def set_auto_snapshot_on_first_run(self, enabled: bool) -> None:
+        self.set("fingerprint.auto_snapshot_on_first_run", bool(enabled))

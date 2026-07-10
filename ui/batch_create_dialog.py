@@ -38,10 +38,12 @@ class BatchCreateDialog(QDialog):
         parent=None,
         proxies: list[ProxyRecord] | None = None,
         default_startup_url: str = "",
+        defaults: dict[str, object] | None = None,
     ) -> None:
         super().__init__(parent)
         self.proxies = proxies or []
         self.proxy_by_url = {proxy.url: proxy for proxy in self.proxies}
+        self.defaults = defaults or {}
         self.setObjectName("batchCreateDialog")
         self.setWindowTitle("Create profiles in batch")
         self.setModal(True)
@@ -159,12 +161,28 @@ class BatchCreateDialog(QDialog):
         buttons.accepted.connect(self._validate_and_accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
+        self._apply_defaults()
 
     def _engine_changed(self) -> None:
         native = self.engine_input.currentData() == "chrome"
         if native:
             self.platform_input.setCurrentIndex(max(0, self.platform_input.findData("windows")))
         self.platform_input.setEnabled(not native)
+
+    def _apply_defaults(self) -> None:
+        engine = str(self.defaults.get("browser_engine") or "cloak")
+        self.engine_input.setCurrentIndex(max(0, self.engine_input.findData(engine)))
+        platform = str(self.defaults.get("platform") or "random")
+        self.platform_input.setCurrentIndex(max(0, self.platform_input.findData(platform)))
+        set_combo_value(self.timezone_input, str(self.defaults.get("timezone") or DEFAULT_TIMEZONE), timezone_label)
+        set_combo_value(self.locale_input, str(self.defaults.get("locale") or DEFAULT_LOCALE), locale_label)
+        try:
+            self.screen_width_input.setValue(int(self.defaults.get("screen_width") or 1200))
+            self.screen_height_input.setValue(int(self.defaults.get("screen_height") or 800))
+        except (TypeError, ValueError):
+            self.screen_width_input.setValue(1200)
+            self.screen_height_input.setValue(800)
+        self.auto_geoip_input.setChecked(bool(self.defaults.get("auto_geoip", True)))
 
     def _apply_proxy_geo(self, *_args) -> None:
         if not self.auto_geoip_input.isChecked():
@@ -221,6 +239,8 @@ class BatchCreateDialog(QDialog):
             "notes": self.notes_input.toPlainText().strip(),
             "browser_engine": self.engine_input.currentData(),
             "startup_url": self.startup_url_input.text().strip(),
+            "group_name": str(self.defaults.get("group_name") or "").strip(),
+            "tags": str(self.defaults.get("tags") or "").strip(),
         }
         payloads: list[dict[str, object]] = []
         for index, name in enumerate(self._names()):

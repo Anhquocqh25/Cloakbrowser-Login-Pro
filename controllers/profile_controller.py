@@ -1346,11 +1346,15 @@ class ProfileController(QObject):
         if profile.deleted_at:
             raise BrowserLaunchError("Restore this profile from Trash before opening it.")
 
-        report = self.profile_compatibility(profile_id)
-        if report.blockers:
+        guard_mode = self.config_store.compatibility_guard_mode()
+        report = self.profile_compatibility(profile_id) if guard_mode != "off" else None
+        if report and report.blockers and guard_mode == "block":
             self._log("profile.compatibility_blocked", profile, "warning", blocker_message(report))
             raise BrowserLaunchError(blocker_message(report))
-        if report.warnings:
+        if report and report.blockers and guard_mode == "warn":
+            self._log("profile.compatibility_warned", profile, "warning", blocker_message(report))
+            self.info_message.emit(f"Compatibility Guard warning: {len(report.blockers)} blocker(s) ignored by setting")
+        if report and report.warnings:
             self.info_message.emit(
                 f"Compatibility Guard · {report.score}/100 · {len(report.warnings)} warning(s)"
             )
@@ -1365,7 +1369,7 @@ class ProfileController(QObject):
         )
         self.task_started.emit(f"profile-open:{profile.id}", f"Open {profile.name}", "Preparing browser")
 
-        if profile.proxy:
+        if profile.proxy and self.config_store.proxy_check_before_run():
             self.repository.update_status(profile_id, "checking", Profile.now_timestamp())
             self.proxy_repository.update_check_result_by_url(profile.proxy, "checking")
             self.load_profiles()
@@ -1622,7 +1626,7 @@ class ProfileController(QObject):
         if profile and profile.browser_engine == "cloak" and not profile.seed_locked:
             self.repository.set_seed_locked(profile_id, True, Profile.now_timestamp())
             profile.seed_locked = True
-        if profile and self.maintenance_repository.latest_baseline(profile_id) is None:
+        if profile and self.config_store.auto_snapshot_on_first_run() and self.maintenance_repository.latest_baseline(profile_id) is None:
             try:
                 self.create_fingerprint_snapshot(profile_id)
             except Exception as error:

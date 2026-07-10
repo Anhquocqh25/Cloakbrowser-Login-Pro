@@ -17,6 +17,96 @@ from ui.modern_controls import ModernComboBox
 from utils.i18n import tr
 
 
+class AdvancedFiltersDialog(QDialog):
+    def __init__(
+        self,
+        groups: list[str],
+        tags: list[str],
+        current: dict[str, object],
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(tr("More profile filters"))
+        self.setModal(True)
+        self.resize(430, 390)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(22, 20, 22, 18)
+        root.setSpacing(14)
+        title = QLabel(tr("More filters"))
+        title.setObjectName("dialogTitle")
+        subtitle = QLabel(tr("Keep the main toolbar compact and move less-used filters here."))
+        subtitle.setObjectName("pageSubtitle")
+        subtitle.setWordWrap(True)
+        root.addWidget(title)
+        root.addWidget(subtitle)
+
+        form = QFormLayout()
+        form.setSpacing(12)
+        self.group_input = ModernComboBox()
+        self.group_input.addItem(tr("All groups"), "")
+        for group in groups:
+            self.group_input.addItem(group, group)
+        self.os_input = ModernComboBox()
+        for label, value in (
+            (tr("All systems"), ""), ("Windows 11", "windows"), ("macOS", "macos"), ("Linux", "linux")
+        ):
+            self.os_input.addItem(label, value)
+        self.tag_input = ModernComboBox()
+        self.tag_input.addItem(tr("All tags"), "")
+        for tag in tags:
+            self.tag_input.addItem(tag, tag)
+        self.density_input = ModernComboBox()
+        for label, value in ((tr("Comfortable"), "comfortable"), (tr("Compact"), "compact"), (tr("Wide"), "wide")):
+            self.density_input.addItem(label, value)
+        self.pinned_input = QCheckBox(tr("Pinned profiles only"))
+
+        self.group_input.setCurrentIndex(max(0, self.group_input.findData(str(current.get("group") or ""))))
+        self.os_input.setCurrentIndex(max(0, self.os_input.findData(str(current.get("platform") or ""))))
+        self.tag_input.setCurrentIndex(max(0, self.tag_input.findData(str(current.get("tag") or ""))))
+        self.density_input.setCurrentIndex(max(0, self.density_input.findData(str(current.get("density") or "comfortable"))))
+        self.pinned_input.setChecked(bool(current.get("pinned")))
+
+        for field in (self.group_input, self.os_input, self.tag_input, self.density_input):
+            field.setMinimumHeight(36)
+        form.addRow(tr("Group"), self.group_input)
+        form.addRow(tr("Operating system"), self.os_input)
+        form.addRow(tr("Tag"), self.tag_input)
+        form.addRow(tr("Table density"), self.density_input)
+        form.addRow("", self.pinned_input)
+        root.addLayout(form)
+
+        buttons = QHBoxLayout()
+        reset = QPushButton(tr("Clear extra filters"))
+        reset.clicked.connect(self.clear_filters)
+        cancel = QPushButton(tr("Cancel"))
+        cancel.clicked.connect(self.reject)
+        apply = QPushButton(tr("Apply filters"))
+        apply.setObjectName("primaryButton")
+        apply.clicked.connect(self.accept)
+        buttons.addWidget(reset)
+        buttons.addStretch(1)
+        buttons.addWidget(cancel)
+        buttons.addWidget(apply)
+        root.addLayout(buttons)
+
+    def clear_filters(self) -> None:
+        self.group_input.setCurrentIndex(0)
+        self.os_input.setCurrentIndex(0)
+        self.tag_input.setCurrentIndex(0)
+        self.density_input.setCurrentIndex(max(0, self.density_input.findData("comfortable")))
+        self.pinned_input.setChecked(False)
+
+    def filters(self) -> dict[str, object]:
+        return {
+            "group": str(self.group_input.currentData() or ""),
+            "platform": str(self.os_input.currentData() or ""),
+            "tag": str(self.tag_input.currentData() or ""),
+            "density": str(self.density_input.currentData() or "comfortable"),
+            "pinned": self.pinned_input.isChecked(),
+        }
+
+
 class OnboardingDialog(QDialog):
     def __init__(self, language: str, startup_url: str, has_profiles: bool, parent=None) -> None:
         super().__init__(parent)

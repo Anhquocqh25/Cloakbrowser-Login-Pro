@@ -888,7 +888,35 @@ class MainWindow(QMainWindow):
         card_layout.addLayout(auto_row)
         self.backup_status = QLabel(f"Backup folder: {APP_BASE_DIR / 'backups'}")
         self.backup_status.setObjectName("hintLabel"); self.backup_status.setWordWrap(True); card_layout.addWidget(self.backup_status)
-        layout.addWidget(card); layout.addStretch(1)
+        layout.addWidget(card)
+
+        recovery = QFrame(); recovery.setObjectName("settingsCard")
+        recovery_layout = QVBoxLayout(recovery); recovery_layout.setContentsMargins(20, 18, 20, 18); recovery_layout.setSpacing(12)
+        recovery_layout.addWidget(QLabel("Recovery Center"))
+        recovery_description = QLabel(
+            "Scan for browser profile folders that are not listed in app.db, recover them safely, "
+            "and review automatic database snapshots."
+        )
+        recovery_description.setObjectName("pageSubtitle"); recovery_description.setWordWrap(True)
+        recovery_layout.addWidget(recovery_description)
+        recovery_buttons = QHBoxLayout()
+        scan_recovery = QPushButton("Scan local data"); scan_recovery.clicked.connect(self.refresh_recovery_center)
+        recover_orphans = QPushButton("Recover orphan profiles"); recover_orphans.setObjectName("primaryButton"); recover_orphans.clicked.connect(self.recover_orphan_profiles)
+        open_backups = QPushButton("Open backup folder"); open_backups.clicked.connect(lambda: QProcess.startDetached("explorer.exe", [str(APP_BASE_DIR / "backups")]))
+        recovery_buttons.addWidget(scan_recovery); recovery_buttons.addWidget(recover_orphans); recovery_buttons.addWidget(open_backups); recovery_buttons.addStretch(1)
+        recovery_layout.addLayout(recovery_buttons)
+        self.recovery_status = QLabel("Recovery Center has not scanned yet.")
+        self.recovery_status.setObjectName("hintLabel"); self.recovery_status.setWordWrap(True)
+        recovery_layout.addWidget(self.recovery_status)
+        self.recovery_snapshot_table = self._data_table(["Snapshot", "Reason", "Modified", "Size"])
+        snapshot_header = self.recovery_snapshot_table.horizontalHeader()
+        snapshot_header.setSectionResizeMode(0, QHeaderView.Stretch)
+        snapshot_header.setSectionResizeMode(1, QHeaderView.Fixed); self.recovery_snapshot_table.setColumnWidth(1, 100)
+        snapshot_header.setSectionResizeMode(2, QHeaderView.Fixed); self.recovery_snapshot_table.setColumnWidth(2, 165)
+        snapshot_header.setSectionResizeMode(3, QHeaderView.Fixed); self.recovery_snapshot_table.setColumnWidth(3, 110)
+        self.recovery_snapshot_table.setMaximumHeight(230)
+        recovery_layout.addWidget(self.recovery_snapshot_table)
+        layout.addWidget(recovery); layout.addStretch(1)
         return page
 
     def _build_health_page(self) -> QWidget:
@@ -1024,6 +1052,7 @@ class MainWindow(QMainWindow):
         self.controller.load_health()
         self.controller.load_fingerprint_lab()
         self.controller.load_profiles()
+        self.refresh_recovery_center()
         QTimer.singleShot(350, self._maybe_show_onboarding)
 
     def populate_profiles(self, profiles: list[Profile]) -> None:
@@ -1702,13 +1731,71 @@ class MainWindow(QMainWindow):
 
     def _backup_completed(self, path: str) -> None:
         self.backup_status.setText(f"Last backup: {path}")
+        self.refresh_recovery_center()
 
     def _restore_completed(self) -> None:
+        self.refresh_recovery_center()
         QMessageBox.information(self, tr("Restore complete"), tr("Backup restored successfully. Restart the app to reload all interface settings."))
 
     def _save_backup_preferences(self, *_args) -> None:
         self.config_store.set_automatic_backup_enabled(self.auto_backup_checkbox.isChecked())
         self.config_store.set_backup_interval_days(int(self.auto_backup_interval.currentData() or 1))
+
+    def refresh_recovery_center(self) -> None:
+        if not hasattr(self, "recovery_snapshot_table"):
+            return
+        try:
+            status = self.controller.recovery_center_status()
+        except Exception as error:
+            self.recovery_status.setText(f"Recovery scan failed: {error}")
+            return
+        orphan_ids = [str(item) for item in status.get("orphan_ids", [])]
+        snapshots = list(status.get("database_snapshots", []))
+        if orphan_ids:
+            self.recovery_status.setText(
+                f"Found {len(orphan_ids)} orphan profile folder(s): {', '.join(orphan_ids[:4])}"
+                f"{'...' if len(orphan_ids) > 4 else ''}"
+            )
+        else:
+            self.recovery_status.setText("No orphan profile folders found. Database snapshots are listed below.")
+        self.recovery_snapshot_table.setRowCount(len(snapshots))
+        for row, snapshot in enumerate(snapshots):
+            values = (
+                str(snapshot.get("name", "")),
+                str(snapshot.get("reason", "")) or "manual",
+                str(snapshot.get("modified_at", "")).replace("T", " ")[:19],
+                self._format_bytes(int(snapshot.get("size", 0) or 0)),
+            )
+            for column, value in enumerate(values):
+                self._set_item(self.recovery_snapshot_table, row, column, value, column == 0)
+
+    def recover_orphan_profiles(self) -> None:
+        try:
+            status = self.controller.recovery_center_status()
+        except Exception as error:
+            self.show_error(str(error)); return
+        count = int(status.get("orphan_count", 0) or 0)
+        if count <= 0:
+            self.show_status("No orphan profile folders found")
+            self.refresh_recovery_center()
+            return
+        if QMessageBox.question(
+            self,
+            tr("Recover orphan profiles"),
+            tr(f"Recover {count} profile folder(s) that are not listed in app.db? A safety backup will be created first."),
+            QMessageBox.Yes | QMessageBox.No,
+        ) != QMessageBox.Yes:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            result = self.controller.recover_orphaned_profile_data()
+            restored = int(result.get("recovered_profiles", 0) or 0) + int(result.get("recovered_deleted_profiles", 0) or 0)
+            self.show_status(f"Recovered {restored} profile(s)")
+            self.refresh_recovery_center()
+        except Exception as error:
+            self.show_error(str(error))
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def export_profile_by_id(self, profile_id: str) -> None:
         profile = self.controller.get_profile(profile_id)
@@ -1935,6 +2022,15 @@ class MainWindow(QMainWindow):
             self.controller.create_profile(name, None, "Asia/Bangkok", "en-US", 1200, 800, platform="windows", notes=notes)
 
     # Auxiliary pages
+    @staticmethod
+    def _format_bytes(size: int) -> str:
+        value = float(max(0, size))
+        for unit in ("B", "KB", "MB", "GB"):
+            if value < 1024 or unit == "GB":
+                return f"{value:.1f} {unit}" if unit != "B" else f"{int(value)} B"
+            value /= 1024
+        return f"{value:.1f} GB"
+
     def _set_item(self, table: QTableWidget, row: int, column: int, text: str, bold: bool = False) -> None:
         item = QTableWidgetItem(text or "—"); item.setToolTip(text or "—")
         if bold: item.setFont(QFont(self.font().family(), 10, QFont.DemiBold))

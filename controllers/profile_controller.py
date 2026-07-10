@@ -6,7 +6,7 @@ import threading
 import uuid
 import json
 import csv
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -32,15 +32,20 @@ from utils.proxy_parser import normalize_proxy
 from utils.proxy_checker import ProxyCheckResult, check_proxy as perform_proxy_check
 from utils.startup_url import normalize_startup_url
 from utils.geo_options import country_to_locale
+from utils.user_agent import unique_user_agent
 from services.backup_service import (
     create_full_backup, export_profile, finish_profile_import, prune_backups,
     read_imported_profile, restore_full_backup,
+)
+from services.data_guard import (
+    list_database_snapshots, orphaned_profile_directories, recover_orphaned_profiles,
 )
 from services.fingerprint_engine import (
     check_consistency, compare_snapshots, detect_duplicates, fingerprint_hash,
     regression_status, snapshot_data,
 )
 from services.compatibility_guard import blocker_message, check_profile_compatibility
+from database.db import get_connection
 
 try:
     from cloakbrowser import __version__ as cloak_wrapper_version
@@ -563,7 +568,33 @@ class ProfileController(QObject):
             self.check_proxy(record.id)
 
     def best_proxy(self, country_code: str = "") -> ProxyRecord | None:
-        return self.proxy_repository.best_available(country_code)
+        now = datetime.utcnow().isoformat(timespec="seconds")
+        usage: dict[str, int] = {}
+        for profile in self.repository.list_profiles():
+            if profile.proxy:
+                usage[profile.proxy] = usage.get(profile.proxy, 0) + 1
+        records = [
+            item for item in self.proxy_repository.list_all()
+            if item.enabled and item.status == "live"
+            and (not item.cooldown_until or item.cooldown_until <= now)
+            and (not country_code or item.country_code.casefold() == country_code.casefold())
+        ]
+        if not records and country_code:
+            records = [
+                item for item in self.proxy_repository.list_all()
+                if item.enabled and item.status == "live"
+                and (not item.cooldown_until or item.cooldown_until <= now)
+            ]
+        return max(
+            records,
+            key=lambda item: (
+                -usage.get(item.url, 0),
+                item.quality_score,
+                -max(0, item.latency_ms),
+                item.success_count,
+            ),
+            default=None,
+        )
 
     def set_proxy_enabled(self, proxy_id: str, enabled: bool) -> None:
         self.proxy_repository.set_enabled(proxy_id, enabled)
@@ -751,6 +782,11 @@ class ProfileController(QObject):
             for profile in self.repository.list_profiles()
             if profile.fingerprint_seed is not None
         }
+        used_user_agents = {
+            profile.user_agent
+            for profile in self.repository.list_profiles()
+            if profile.user_agent
+        }
         used_seeds = set(existing_seeds)
         screen_sizes = {
             "windows": [(1920, 1080), (1600, 900), (1536, 864), (1440, 900), (1366, 768), (1280, 800)],
@@ -794,6 +830,16 @@ class ProfileController(QObject):
             shared_notes = str(payload.get("notes") or "").strip()
             config_note = f"{platform_label} · {screen_width}x{screen_height} · {resolved_locale}"
             notes = f"{shared_notes} · {config_note}" if shared_notes else config_note
+            requested_user_agent = str(payload.get("user_agent") or "").strip()
+            if engine == "chrome":
+                user_agent = ""
+            elif requested_user_agent:
+                user_agent = requested_user_agent
+                used_user_agents.add(user_agent)
+            elif randomize:
+                user_agent = unique_user_agent(platform, used_user_agents)
+            else:
+                user_agent = ""
             profile = Profile(
                 id=str(uuid.uuid4()),
                 name=name,
@@ -807,6 +853,7 @@ class ProfileController(QObject):
                 platform=platform,
                 browser_engine=engine,
                 notes=notes,
+                user_agent=user_agent,
                 startup_url=normalize_startup_url(str(payload.get("startup_url") or "")),
                 group_name=str(payload.get("group_name") or "").strip(),
                 tags=str(payload.get("tags") or "").strip(),
@@ -1171,6 +1218,42 @@ class ProfileController(QObject):
         self._start_maintenance("restore", lambda: restore_full_backup(source))
         self.info_message.emit("Restoring backup...")
 
+    def recovery_center_status(self) -> dict[str, object]:
+        with get_connection() as connection:
+            orphans = orphaned_profile_directories(connection)
+        snapshots = list_database_snapshots(30)
+        return {
+            "orphan_count": len(orphans),
+            "orphan_ids": [item.name for item in orphans],
+            "database_snapshots": [asdict(snapshot) for snapshot in snapshots],
+        }
+
+    def recover_orphaned_profile_data(self) -> dict[str, object]:
+        if self.has_background_work():
+            raise BrowserLaunchError("Stop all running profiles and background checks before recovering profile data.")
+        safety = create_full_backup()
+        with get_connection() as connection:
+            report = recover_orphaned_profiles(connection)
+            connection.commit()
+        self.load_profiles()
+        self.load_trash()
+        self._log(
+            "recovery.orphans_restored",
+            details=(
+                f"active={report.recovered_profiles}, trash={report.recovered_deleted_profiles}, "
+                f"safety={safety}"
+            ),
+        )
+        self.info_message.emit(
+            f"Recovered {report.recovered_profiles + report.recovered_deleted_profiles} profile(s)"
+        )
+        return {
+            "safety_backup": str(safety),
+            "recovered_profiles": report.recovered_profiles,
+            "recovered_deleted_profiles": report.recovered_deleted_profiles,
+            "orphan_ids": report.orphan_directories or [],
+        }
+
     def run_automatic_backup_if_due(self) -> None:
         if not self.config_store.automatic_backup_enabled() or "backup" in self.maintenance_threads or self.worker_threads:
             return
@@ -1272,7 +1355,14 @@ class ProfileController(QObject):
                 f"Compatibility Guard · {report.score}/100 · {len(report.warnings)} warning(s)"
             )
 
-        self._log("profile.open_requested", profile)
+        self._log(
+            "profile.open_requested",
+            profile,
+            details=(
+                f"engine={profile.browser_engine}, os={profile.platform}, proxy={'yes' if profile.proxy else 'no'}, "
+                f"timezone={profile.timezone}, locale={profile.locale}, ua={'custom' if profile.user_agent else 'auto'}"
+            ),
+        )
         self.task_started.emit(f"profile-open:{profile.id}", f"Open {profile.name}", "Preparing browser")
 
         if profile.proxy:
@@ -1446,11 +1536,17 @@ class ProfileController(QObject):
         if not result.alive:
             self.repository.update_status(target_id, "stopped", Profile.now_timestamp())
             self.load_profiles()
+            self._log("profile.proxy_check_failed", profile, "warning", result.error or "Proxy is not live")
             self.operation_failed.emit(
                 f"Cannot open {profile.name}: proxy is not live.\n{result.error}"
             )
             self.task_finished.emit(f"profile-open:{profile.id}", False, result.error or "Proxy is not live")
             return
+        self._log(
+            "profile.proxy_check_passed",
+            profile,
+            details=f"ip={result.exit_ip}, latency={result.latency_ms}ms, location={result.location}, timezone={result.timezone}",
+        )
         self.info_message.emit(
             f"Proxy live · {result.latency_ms} ms · {result.exit_ip}"
             f"{' · ' + result.location if result.location else ''}. Opening {profile.name}..."
@@ -1531,7 +1627,14 @@ class ProfileController(QObject):
                 self.create_fingerprint_snapshot(profile_id)
             except Exception as error:
                 self.maintenance_repository.log("fingerprint.snapshot_failed", profile_id=profile.id, profile_name=profile.name, severity="warning", details=str(error))
-        self._log("profile.opened", profile)
+        self._log(
+            "profile.opened",
+            profile,
+            details=(
+                f"engine={profile.browser_engine if profile else ''}, seed={profile.fingerprint_seed if profile else ''}, "
+                f"proxy={'yes' if profile and profile.proxy else 'no'}"
+            ),
+        )
         self.load_profiles()
         self.profile_opened.emit(profile_id)
         self.task_finished.emit(f"profile-open:{profile_id}", True, "Browser opened")
@@ -1550,7 +1653,7 @@ class ProfileController(QObject):
             self._move_profile_to_trash(profile_id, profile_name)
             return
         self.load_profiles()
-        self._log("profile.closed", profile)
+        self._log("profile.closed", profile, details="Browser window/process closed and profile status reset to stopped")
         self.profile_closed.emit(profile_id)
 
     def _handle_failed(self, profile_id: str, error_message: str) -> None:
@@ -1563,6 +1666,6 @@ class ProfileController(QObject):
             return
         self.load_profiles()
         profile = self.repository.get_profile(profile_id)
-        self._log("profile.failed", profile, "error", error_message)
+        self._log("profile.failed", profile, "error", f"launch_failed: {error_message}")
         self.operation_failed.emit(error_message)
         self.task_finished.emit(f"profile-open:{profile_id}", False, error_message)

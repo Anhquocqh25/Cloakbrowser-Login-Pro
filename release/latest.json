@@ -1,8 +1,8 @@
 {
-  "version": "0.1.3",
-  "notes": "Data Guard: automatic app.db startup snapshots, profile.json sidecars, and orphan profile recovery when the profile database is missing or recreated.",
-  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.3/CloakBrowser-Login-0.1.3-Windows.zip",
-  "portable_sha256": "d009bbf4695a494f9589ba4d4c1c30757519309414c34e0b55fdb0574077d767",
-  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.3/CloakBrowser-Login-Pro-Setup-0.1.3-Windows.exe",
-  "installer_sha256": "0d547b4a5f9ea48796d904c628dac1c78c47a40a1bbff92772d1420016cfc203"
+  "version": "0.1.4",
+  "notes": "Recovery Center, advanced Compatibility Guard, User-Agent Manager for batch profiles, smarter Proxy Pool distribution, and detailed Launch Log.",
+  "portable_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.4/CloakBrowser-Login-0.1.4-Windows.zip",
+  "portable_sha256": "c97fd00f48f1ff99630dd9f709fed78cad9bca2b93a59f5ac8f67fe8a4aeb7b5",
+  "installer_url": "https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.4/CloakBrowser-Login-Pro-Setup-0.1.4-Windows.exe",
+  "installer_sha256": "85d7aa8d79ae741085a0613fd9d73d4f875aa4f12a1343eeabac607da5a7099c"
 }

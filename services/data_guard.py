@@ -27,6 +27,15 @@ class StartupRecoveryReport:
         return self.recovered_profiles > 0 or self.recovered_deleted_profiles > 0
 
 
+@dataclass(frozen=True, slots=True)
+class DatabaseSnapshot:
+    path: str
+    name: str
+    size: int
+    modified_at: str
+    reason: str = ""
+
+
 def backup_database_snapshot(reason: str = "startup", keep: int = 30) -> Path | None:
     ensure_app_directories()
     if not DATABASE_PATH.is_file() or DATABASE_PATH.stat().st_size <= 0:
@@ -59,6 +68,51 @@ def prune_database_snapshots(keep: int = 30) -> None:
     )
     for old in backups[max(1, keep):]:
         old.unlink(missing_ok=True)
+
+
+def list_database_snapshots(limit: int = 30) -> list[DatabaseSnapshot]:
+    if not DB_BACKUP_DIR.exists():
+        return []
+    snapshots = sorted(
+        {item for item in DB_BACKUP_DIR.glob("app-*.db")} | {item for item in DB_BACKUP_DIR.glob("app-*.raw.db")},
+        key=lambda item: item.stat().st_mtime,
+        reverse=True,
+    )
+    records: list[DatabaseSnapshot] = []
+    for item in snapshots[: max(1, limit)]:
+        stat = item.stat()
+        parts = item.stem.split("-")
+        reason = parts[1] if len(parts) >= 3 else ""
+        records.append(
+            DatabaseSnapshot(
+                path=str(item),
+                name=item.name,
+                size=stat.st_size,
+                modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+                reason=reason,
+            )
+        )
+    return records
+
+
+def orphaned_profile_directories(connection: sqlite3.Connection) -> list[Path]:
+    ensure_app_directories()
+    if not PROFILE_STORAGE_DIR.exists():
+        return []
+    rows = connection.execute("SELECT id FROM profiles").fetchall()
+    existing_ids = {str(row["id"]) for row in rows}
+    orphans: list[Path] = []
+    for directory in sorted(PROFILE_STORAGE_DIR.iterdir(), key=lambda item: item.name.casefold()):
+        if directory.is_dir() and directory.name not in existing_ids:
+            candidate = profile_from_sidecar_or_directory(
+                directory,
+                existing_names=set(),
+                used_seeds=set(),
+                recovered_index=len(orphans) + 1,
+            )
+            if candidate is not None:
+                orphans.append(directory)
+    return orphans
 
 
 def recover_orphaned_profiles(connection: sqlite3.Connection) -> StartupRecoveryReport:

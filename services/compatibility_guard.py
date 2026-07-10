@@ -7,7 +7,9 @@ from typing import Any
 
 from models.profile import Profile
 from models.proxy import ProxyRecord
+from utils.geo_options import country_to_locale
 from utils.proxy_parser import parse_proxy
+from utils.user_agent import chrome_major_from_user_agent, user_agent_platform
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,18 +64,27 @@ def check_profile_compatibility(
     if profile.browser_engine == "cloak" and duplicates:
         add("duplicate_seed", "blocker", "Duplicate fingerprint seed", f"Also used by: {', '.join(item.name for item in duplicates[:4])}", "Regenerate this profile seed.")
 
-    expected_tokens = {
-        "windows": ("windows nt",), "macos": ("macintosh", "mac os x"), "linux": ("x11", "linux"),
-    }
     ua = profile.user_agent.strip().casefold()
-    if ua and not any(token in ua for token in expected_tokens.get(profile.platform, ())):
-        add("user_agent", "blocker", "User-Agent and OS conflict", f"The custom User-Agent does not represent {profile.platform}.", "Clear the custom User-Agent or select the matching OS.")
     if ua:
+        ua_platform = user_agent_platform(ua)
+        if ua_platform and ua_platform != profile.platform:
+            add("user_agent", "blocker", "User-Agent and OS conflict", f"The custom User-Agent represents {ua_platform}, but the profile OS is {profile.platform}.", "Clear the custom User-Agent or select the matching OS.")
+        elif not ua_platform:
+            add("user_agent_unknown", "warning", "Unrecognized User-Agent platform", "The custom User-Agent does not expose a clear desktop OS token.", "Use a preset User-Agent.")
+        same_ua = [
+            item for item in (all_profiles or [])
+            if item.id != profile.id and item.user_agent and item.user_agent.strip() == profile.user_agent.strip()
+        ]
+        if same_ua and profile.platform != "windows":
+            add("duplicate_user_agent", "warning", "User-Agent reused", f"Also used by: {', '.join(item.name for item in same_ua[:4])}", "Use a different User-Agent preset for this OS.")
         version_match = re.search(r"chrome/(\d+)", ua)
         core_version = str((version_info or {}).get("version") or "")
         core_major = re.search(r"\d+", core_version)
         if version_match and core_major and version_match.group(1) != core_major.group(0):
             add("browser_version", "warning", "Browser version mismatch", f"User-Agent Chrome/{version_match.group(1)} vs core {core_major.group(0)}.", "Use the engine-generated User-Agent.")
+        ua_major = chrome_major_from_user_agent(ua)
+        if ua_major and int(ua_major) < 120:
+            add("old_user_agent", "warning", "Old Chrome User-Agent", f"Chrome/{ua_major} is much older than current web baselines.", "Use a current Chrome User-Agent preset.")
 
     if not (800 <= profile.screen_width <= 5120 and 600 <= profile.screen_height <= 2880 and profile.screen_width >= profile.screen_height):
         add("screen", "blocker", "Unsupported screen geometry", profile.screen_size_label, "Choose a common desktop resolution.")
@@ -102,6 +113,19 @@ def check_profile_compatibility(
                         add("proxy_stale", "warning", "Proxy result is stale", proxy_record.last_checked_at.replace("T", " "), "Run a fresh proxy check.")
                 except ValueError:
                     pass
+            if profile.auto_geoip and proxy_record.timezone and profile.timezone and profile.timezone != proxy_record.timezone:
+                add("timezone_not_synced", "warning", "Stored timezone not synced yet", f"Profile {profile.timezone} / proxy {proxy_record.timezone}", "Recheck the proxy or save the profile again.")
+            expected_locale = country_to_locale(proxy_record.country_code)
+            if proxy_record.country_code and profile.locale and expected_locale:
+                profile_country = _locale_country(profile.locale)
+                if profile_country and profile_country != proxy_record.country_code.casefold():
+                    add("locale_proxy", "warning", "Locale differs from proxy country", f"Profile {profile.locale} / proxy {proxy_record.country_code.upper()}", f"Use {expected_locale} or enable Based on proxy.")
+            proxy_users = [
+                item for item in (all_profiles or [])
+                if item.id != profile.id and item.proxy and item.proxy == profile.proxy and not item.deleted_at
+            ]
+            if len(proxy_users) >= 3:
+                add("proxy_reuse", "warning", "Proxy reused by many profiles", f"{len(proxy_users) + 1} profiles share this proxy.", "Use Smart Proxy Pool to distribute profiles.")
             if not profile.auto_geoip and proxy_record.timezone and profile.timezone != proxy_record.timezone:
                 add("timezone_proxy", "warning", "Timezone differs from proxy", f"Profile {profile.timezone} · proxy {proxy_record.timezone}", "Enable Based on proxy.")
         if not profile.auto_geoip:
@@ -114,6 +138,12 @@ def check_profile_compatibility(
     score = max(0, 100 - blockers * 35 - warnings * 8)
     status = "blocked" if blockers else ("warning" if warnings else "ready")
     return CompatibilityReport(status, score, tuple(issues))
+
+
+def _locale_country(locale: str) -> str:
+    clean = str(locale or "").replace("_", "-").casefold()
+    parts = [part for part in clean.split("-") if part]
+    return parts[-1] if len(parts) >= 2 and len(parts[-1]) == 2 else ""
 
 
 def blocker_message(report: CompatibilityReport) -> str:

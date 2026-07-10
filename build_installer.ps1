@@ -9,7 +9,11 @@ $ConfigText = Get-Content -LiteralPath (Join-Path $ProjectDir "config.py") -Raw
 $VersionMatch = [regex]::Match($ConfigText, 'APP_VERSION\s*=\s*"([^"]+)"')
 if (-not $VersionMatch.Success) { throw "Could not read APP_VERSION from config.py" }
 $Version = $VersionMatch.Groups[1].Value
-if (-not $ReleaseRoot) { $ReleaseRoot = Join-Path (Split-Path -Parent $ProjectDir) "release" }
+if (-not $ReleaseRoot) {
+    $ReleaseRoot = Join-Path $ProjectDir "release"
+} elseif (-not [System.IO.Path]::IsPathRooted($ReleaseRoot)) {
+    $ReleaseRoot = Join-Path $ProjectDir $ReleaseRoot
+}
 $ReleaseRoot = [System.IO.Path]::GetFullPath($ReleaseRoot)
 $AppSourceDir = Join-Path $ReleaseRoot "CloakBrowser Login $Version"
 $OutputDir = $ReleaseRoot

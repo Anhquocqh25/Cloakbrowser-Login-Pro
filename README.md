@@ -4,9 +4,12 @@
 
 ## Tải bản chạy sẵn
 
-Phiên bản mới nhất: **0.1.7**
+Phiên bản source mới nhất: **0.1.8** (đã merge `main`).
 
-Bạn có thể chọn một trong hai bản:
+> **0.1.8** tập trung bảo mật/ổn định: mã hóa proxy (DPAPI), health check không báo pass giả, SQLite WAL, UTC thống nhất, update host allowlist. **Không đổi lõi fingerprint / Cloak launch.**  
+> Bản cài sẵn (EXE/ZIP) **0.1.8** sẽ có sau khi build release; trong lúc đó dùng source 0.1.8 hoặc installer **0.1.7** bên dưới.
+
+Bạn có thể chọn một trong hai bản cài sẵn hiện có:
 
 ### Bản cài đặt trực tiếp
 
@@ -116,6 +119,7 @@ Mỗi bản mới cần build lại cả installer và portable, tính SHA-256 c
 
 ## Phiên bản
 
+- `0.1.8`: Mã hóa proxy at rest (Windows DPAPI), health WebRTC/DNS không báo pass giả, SQLite WAL, timestamp UTC thống nhất, update download host allowlist; không đổi lõi fingerprint/Cloak launch.
 - `0.1.4`: Recovery Center, Compatibility Guard nâng cao, User-Agent Manager cho batch profile, Smart Proxy Pool tránh dồn proxy và Launch Log chi tiết.
 - `0.1.5`: Profile Health Dashboard, Update System nâng cao, Group/Tag tools, profile preview panel, quick filters, table density và toast notification.
 - `0.1.7`: Profile Preview responsive, tóm tắt nhiều hồ sơ, popup preview cho màn hẹp, đồng bộ ngôn ngữ Anh/Việt ở các phần mới và rà lỗi layout khi thu nhỏ cửa sổ.

@@ -1,11 +1,11 @@
 ﻿from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 import json
 from typing import Any
 
 from config import DEFAULT_LOCALE, DEFAULT_SCREEN_HEIGHT, DEFAULT_SCREEN_WIDTH, DEFAULT_TIMEZONE
+from utils.timeutil import utc_iso
 
 
 @dataclass(slots=True)
@@ -47,14 +47,22 @@ class Profile:
 
     @classmethod
     def now_timestamp(cls) -> str:
-        return datetime.utcnow().isoformat(timespec="seconds")
+        return utc_iso()
 
     @classmethod
     def from_row(cls, row: Any) -> "Profile":
+        from utils.secret_store import decrypt_proxy_field
+
+        proxy_value = row["proxy"]
+        try:
+            proxy_value = decrypt_proxy_field(proxy_value)
+        except OSError:
+            # Keep the profile loadable; launch/check will surface decrypt errors.
+            pass
         return cls(
             id=row["id"],
             name=row["name"],
-            proxy=row["proxy"],
+            proxy=proxy_value,
             timezone=row["timezone"],
             locale=row["locale"],
             screen_width=row["screen_width"],
@@ -82,10 +90,12 @@ class Profile:
         )
 
     def to_db_tuple(self) -> tuple[Any, ...]:
+        from utils.secret_store import encrypt_proxy_field
+
         return (
             self.id,
             self.name,
-            self.proxy,
+            encrypt_proxy_field(self.proxy),
             self.timezone,
             self.locale,
             self.screen_width,

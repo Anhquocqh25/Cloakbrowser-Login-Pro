@@ -5,6 +5,7 @@ import sqlite3
 from config import DATABASE_PATH
 from services.data_guard import StartupRecoveryReport, backup_database_snapshot, recover_orphaned_profiles
 from utils.paths import ensure_app_directories
+from utils.secret_store import decrypt_proxy_field, encrypt_proxy_field, is_encrypted
 
 
 CREATE_PROFILES_TABLE_SQL = """
@@ -133,8 +134,13 @@ DEFAULT_BOOKMARKS = [
 
 def get_connection() -> sqlite3.Connection:
     ensure_app_directories()
-    connection = sqlite3.connect(DATABASE_PATH)
+    connection = sqlite3.connect(DATABASE_PATH, timeout=30.0)
     connection.row_factory = sqlite3.Row
+    # Reliability under concurrent UI + worker threads (still one connection per call).
+    connection.execute("PRAGMA busy_timeout = 5000")
+    connection.execute("PRAGMA journal_mode = WAL")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA foreign_keys = ON")
     return connection
 
 
@@ -208,8 +214,42 @@ def initialize_database() -> StartupRecoveryReport:
             )
         # Running browser objects cannot survive an application restart.
         connection.execute("UPDATE profiles SET status = 'stopped' WHERE status != 'stopped'")
+        _migrate_proxy_secrets(connection)
         report = recover_orphaned_profiles(connection)
         if backup_path:
             report.database_backup = str(backup_path)
         connection.commit()
         return report
+
+
+def _migrate_proxy_secrets(connection: sqlite3.Connection) -> None:
+    """Encrypt legacy plaintext proxy URLs at rest (Windows DPAPI). Non-fatal on failure."""
+    try:
+        proxy_rows = connection.execute("SELECT id, url FROM proxies").fetchall()
+        for row in proxy_rows:
+            url = row["url"] or ""
+            if not url or is_encrypted(url):
+                continue
+            try:
+                stored = encrypt_proxy_field(url)
+            except OSError:
+                continue
+            if stored and stored != url:
+                connection.execute("UPDATE proxies SET url = ? WHERE id = ?", (stored, row["id"]))
+
+        profile_rows = connection.execute(
+            "SELECT id, proxy FROM profiles WHERE proxy IS NOT NULL AND TRIM(proxy) != ''"
+        ).fetchall()
+        for row in profile_rows:
+            proxy = row["proxy"] or ""
+            if not proxy or is_encrypted(proxy):
+                continue
+            try:
+                stored = encrypt_proxy_field(proxy)
+            except OSError:
+                continue
+            if stored and stored != proxy:
+                connection.execute("UPDATE profiles SET proxy = ? WHERE id = ?", (stored, row["id"]))
+    except sqlite3.Error:
+        # Keep startup resilient; app can still run with mixed legacy values.
+        return

@@ -15,6 +15,7 @@ from config import (
 )
 from models.profile import Profile
 from utils.paths import profile_user_data_dir
+from utils.secret_store import decrypt_proxy_field, encrypt_proxy_field
 
 
 SIDECAR_FILE = "profile.json"
@@ -24,6 +25,12 @@ SIDECAR_SCHEMA = 1
 def _profile_payload(profile: Profile) -> dict[str, Any]:
     payload = asdict(profile)
     payload.pop("cloak_version", None)
+    # Keep proxy credentials out of plain sidecar JSON on disk.
+    if payload.get("proxy"):
+        try:
+            payload["proxy"] = encrypt_proxy_field(str(payload["proxy"]))
+        except OSError:
+            payload["proxy"] = None
     # Runtime states should not be trusted after a restart or DB recovery.
     if payload.get("status") not in {"stopped", "checking", "starting", "running", "stopping"}:
         payload["status"] = "stopped"
@@ -129,10 +136,17 @@ def profile_from_sidecar_or_directory(
     browser_engine = str(payload.get("browser_engine") or "cloak")
     if browser_engine not in {"cloak", "chrome"}:
         browser_engine = "cloak"
+    raw_proxy = str(payload.get("proxy") or "").strip() or None
+    if raw_proxy:
+        try:
+            raw_proxy = decrypt_proxy_field(raw_proxy)
+        except OSError:
+            # Leave encrypted/unreadable value as None rather than crashing recovery.
+            raw_proxy = None
     profile = Profile(
         id=profile_id,
         name=name,
-        proxy=str(payload.get("proxy") or "").strip() or None,
+        proxy=raw_proxy,
         timezone=str(payload.get("timezone") or DEFAULT_TIMEZONE),
         locale=str(payload.get("locale") or DEFAULT_LOCALE),
         screen_width=_safe_int(payload.get("screen_width"), DEFAULT_SCREEN_WIDTH),

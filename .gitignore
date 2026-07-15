@@ -24,6 +24,10 @@ dist/
 profiles/
 backups/
 .smoke-data/
+.smoke-run/
+.full-test/
+.full-test2/
+.full-test3/
 .flag-test/
 .flag-migration/
 

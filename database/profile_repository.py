@@ -3,6 +3,7 @@
 from database.db import get_connection
 from models.profile import Profile
 from services.profile_sidecar import write_profile_sidecar
+from utils.secret_store import decrypt_proxy_field, encrypt_proxy_field
 
 
 class ProfileRepository:
@@ -129,7 +130,7 @@ class ProfileRepository:
                 """,
                 (
                     profile.name,
-                    profile.proxy,
+                    encrypt_proxy_field(profile.proxy),
                     profile.timezone,
                     profile.locale,
                     profile.screen_width,
@@ -250,54 +251,67 @@ class ProfileRepository:
         self._sync_sidecar(profile)
 
     def replace_proxy_url(self, old_url: str, new_url: str, updated_at: str) -> int:
+        """Replace proxy by plaintext match (DB values may be DPAPI-encrypted)."""
+        if not old_url:
+            return 0
+        stored_new = encrypt_proxy_field(new_url)
+        matched_ids: list[str] = []
         with get_connection() as connection:
-            cursor = connection.execute(
-                "UPDATE profiles SET proxy = ?, updated_at = ? WHERE proxy = ?",
-                (new_url, updated_at, old_url),
-            )
-            profiles = [
-                self._profile_from_row(row)
-                for row in connection.execute(
-                    """
-                    SELECT id, name, proxy, timezone, locale, screen_width, screen_height,
-                           fingerprint_seed, auto_geoip, platform, browser_engine, notes, user_agent, startup_url,
-                           extension_ids, bookmark_ids, status, deleted_at, group_name, tags, pinned,
-                           last_used_at, health_status, health_checked_at, seed_locked, created_at, updated_at
-                    FROM profiles
-                    WHERE proxy = ?
-                    """,
-                    (new_url,),
-                ).fetchall()
-            ]
+            rows = connection.execute(
+                """
+                SELECT id, proxy FROM profiles
+                WHERE proxy IS NOT NULL AND TRIM(proxy) != ''
+                """
+            ).fetchall()
+            for row in rows:
+                if not self._proxy_matches(row["proxy"], old_url):
+                    continue
+                connection.execute(
+                    "UPDATE profiles SET proxy = ?, updated_at = ? WHERE id = ?",
+                    (stored_new, updated_at, row["id"]),
+                )
+                matched_ids.append(row["id"])
+            profiles = [self._select_profile(connection, profile_id) for profile_id in matched_ids]
             connection.commit()
             for profile in profiles:
                 self._sync_sidecar(profile)
-            return cursor.rowcount
+            return len(matched_ids)
 
     def clear_proxy_url(self, url: str, updated_at: str) -> int:
+        if not url:
+            return 0
+        cleared = 0
         with get_connection() as connection:
-            cursor = connection.execute(
-                "UPDATE profiles SET proxy = NULL, updated_at = ? WHERE proxy = ?",
-                (updated_at, url),
-            )
-            profiles = [
-                self._profile_from_row(row)
-                for row in connection.execute(
-                    """
-                    SELECT id, name, proxy, timezone, locale, screen_width, screen_height,
-                           fingerprint_seed, auto_geoip, platform, browser_engine, notes, user_agent, startup_url,
-                           extension_ids, bookmark_ids, status, deleted_at, group_name, tags, pinned,
-                           last_used_at, health_status, health_checked_at, seed_locked, created_at, updated_at
-                    FROM profiles
-                    WHERE updated_at = ? AND proxy IS NULL
-                    """,
-                    (updated_at,),
-                ).fetchall()
-            ]
+            rows = connection.execute(
+                """
+                SELECT id, proxy FROM profiles
+                WHERE proxy IS NOT NULL AND TRIM(proxy) != ''
+                """
+            ).fetchall()
+            matched_ids: list[str] = []
+            for row in rows:
+                if not self._proxy_matches(row["proxy"], url):
+                    continue
+                connection.execute(
+                    "UPDATE profiles SET proxy = NULL, updated_at = ? WHERE id = ?",
+                    (updated_at, row["id"]),
+                )
+                matched_ids.append(row["id"])
+                cleared += 1
+            profiles = [self._select_profile(connection, profile_id) for profile_id in matched_ids]
             connection.commit()
             for profile in profiles:
                 self._sync_sidecar(profile)
-            return cursor.rowcount
+            return cleared
+
+    @staticmethod
+    def _proxy_matches(stored: str | None, plaintext: str) -> bool:
+        if not stored or not plaintext:
+            return False
+        try:
+            return decrypt_proxy_field(stored) == plaintext
+        except OSError:
+            return stored == plaintext
 
     def delete_profile(self, profile_id: str) -> None:
         with get_connection() as connection:

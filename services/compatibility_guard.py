@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from models.profile import Profile
 from models.proxy import ProxyRecord
 from utils.geo_options import country_to_locale
 from utils.proxy_parser import parse_proxy
+from utils.timeutil import is_older_than
 from utils.user_agent import chrome_major_from_user_agent, user_agent_platform
 
 
@@ -106,13 +107,14 @@ def check_profile_compatibility(
                 add("proxy_dead", "blocker", "Proxy is offline", proxy_record.check_error or proxy_record.name, "Choose another live proxy.")
             elif proxy_record.status not in {"live", "checking"}:
                 add("proxy_unknown", "warning", "Proxy has not been verified", proxy_record.name, "Check the proxy before launch.")
-            if proxy_record.last_checked_at:
-                try:
-                    checked = datetime.fromisoformat(proxy_record.last_checked_at)
-                    if checked < datetime.utcnow() - timedelta(hours=2):
-                        add("proxy_stale", "warning", "Proxy result is stale", proxy_record.last_checked_at.replace("T", " "), "Run a fresh proxy check.")
-                except ValueError:
-                    pass
+            if proxy_record.last_checked_at and is_older_than(proxy_record.last_checked_at, timedelta(hours=2)):
+                add(
+                    "proxy_stale",
+                    "warning",
+                    "Proxy result is stale",
+                    proxy_record.last_checked_at.replace("T", " "),
+                    "Run a fresh proxy check.",
+                )
             if profile.auto_geoip and proxy_record.timezone and profile.timezone and profile.timezone != proxy_record.timezone:
                 add("timezone_not_synced", "warning", "Stored timezone not synced yet", f"Profile {profile.timezone} / proxy {proxy_record.timezone}", "Recheck the proxy or save the profile again.")
             expected_locale = country_to_locale(proxy_record.country_code)

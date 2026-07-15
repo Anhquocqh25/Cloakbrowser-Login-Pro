@@ -4,6 +4,9 @@ import sys
 import math
 from collections import Counter
 from datetime import datetime, timedelta
+
+from utils.proxy_parser import parse_proxy
+from utils.timeutil import parse_iso_datetime, utc_now
 from functools import partial
 from pathlib import Path
 from urllib.parse import urlparse
@@ -2702,26 +2705,30 @@ class MainWindow(QMainWindow):
 
     def _render_trash(self, profiles: list[Profile]) -> None:
         self.trash_table.setRowCount(len(profiles))
-        now = datetime.utcnow()
+        now = utc_now()
         retention_days = self.config_store.trash_retention_days()
         for row, profile in enumerate(profiles):
-            try:
-                deleted_at = datetime.fromisoformat(profile.deleted_at)
+            deleted_at = parse_iso_datetime(profile.deleted_at)
+            if deleted_at is not None:
                 expires_at = deleted_at + timedelta(days=retention_days)
                 days_remaining = max(0, math.ceil((expires_at - now).total_seconds() / 86400))
                 deleted_text = deleted_at.strftime("%Y-%m-%d %H:%M")
-            except (TypeError, ValueError):
+            else:
                 days_remaining = 0
                 deleted_text = profile.deleted_at or "—"
             checkbox = QCheckBox(); checkbox.setChecked(profile.id in self._trash_checked_ids)
             checkbox.toggled.connect(partial(self._trash_checked, profile.id))
             holder = QWidget(); holder_layout = QHBoxLayout(holder); holder_layout.setContentsMargins(8, 0, 0, 0); holder_layout.addWidget(checkbox); holder_layout.addStretch(1)
             self.trash_table.setCellWidget(row, 0, holder)
+            proxy_label = "No proxy"
+            if profile.proxy:
+                parsed = parse_proxy(profile.proxy)
+                proxy_label = parsed.masked if parsed else "Proxy configured"
             values = (
                 profile.name,
                 deleted_text,
                 f"{days_remaining} day(s)",
-                profile.proxy or "No proxy",
+                proxy_label,
             )
             for column, value in enumerate(values, start=1):
                 self._set_item(self.trash_table, row, column, value, column == 1)

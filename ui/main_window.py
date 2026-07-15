@@ -1122,32 +1122,51 @@ class MainWindow(QMainWindow):
     def _app_update_checked(self, info: AppUpdateInfo) -> None:
         self._available_app_update = info
         self._downloaded_app_update = None
-        self.task_center.finish_task("app-update-check", f"Latest: {info.version}")
+        self.task_center.finish_task(
+            "app-update-check",
+            f"Installed {APP_VERSION} · published channel {info.version}",
+        )
         url, sha256 = update_asset(info, self._installation_mode)
         asset_name = Path(urlparse(url).path).name or "update package"
         self.app_update_asset_label.setText(
+            f"Installed app: {APP_VERSION}\n"
+            f"Published channel (GitHub): {info.version}\n"
             f"Edition: {self._installation_mode.title()} · Asset: {asset_name}\n"
             f"SHA-256: {sha256[:12]}...{sha256[-10:]} · verified after download"
         )
         self.app_update_notes.setText(info.notes or tr("No release notes were provided."))
         self.open_release_button.show()
-        if not is_newer_version(info.version, APP_VERSION):
+        if is_newer_version(info.version, APP_VERSION):
+            notes = f"\n{info.notes}" if info.notes else ""
             self.app_update_status.setText(tr(
-                f"You are up to date · version {APP_VERSION} is the latest version"
+                f"Update available · {info.version} is newer than your install ({APP_VERSION}).{notes}"
+            ))
+            self.install_app_update_button.setText(tr("Update now"))
+            self.install_app_update_button.show()
+            return
+        if is_newer_version(APP_VERSION, info.version):
+            # Common after shipping source/tag before build_release assets exist.
+            self.app_update_status.setText(tr(
+                f"You are on {APP_VERSION}, which is newer than the published installer channel "
+                f"({info.version}). In-app Update only installs packages listed in release/latest.json "
+                f"with real Setup/ZIP assets. Run build_release.ps1 and publish GitHub Release assets "
+                f"to offer {APP_VERSION} through this button."
             ))
             self.install_app_update_button.hide()
             return
-        notes = f"\n{info.notes}" if info.notes else ""
         self.app_update_status.setText(tr(
-            f"Version {info.version} is available.{notes}"
+            f"You are up to date · installed {APP_VERSION} matches the published channel"
         ))
-        self.install_app_update_button.setText(tr("Update now"))
-        self.install_app_update_button.show()
+        self.install_app_update_button.hide()
 
     def open_latest_release_page(self) -> None:
         info = self._available_app_update
-        version = info.version if info else APP_VERSION
-        QDesktopServices.openUrl(QUrl(f"https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/tag/v{version}"))
+        if info is not None:
+            QDesktopServices.openUrl(
+                QUrl(f"https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/tag/v{info.version}")
+            )
+            return
+        QDesktopServices.openUrl(QUrl("https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases"))
 
     def _app_update_failed(self, message: str) -> None:
         self.app_update_status.setText(tr(f"Update check failed · {message}"))

@@ -53,11 +53,26 @@ class AppUpdateInfo:
         )
 
 
+_ALLOWED_UPDATE_HOSTS = {
+    "github.com",
+    "www.github.com",
+    "api.github.com",
+    "objects.githubusercontent.com",
+    "release-assets.githubusercontent.com",
+    "github-releases.githubusercontent.com",
+    "raw.githubusercontent.com",
+}
+
+
 def _valid_download_url(value: object) -> str:
     url = str(value or "").strip()
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.netloc:
+    host = (parsed.hostname or "").casefold()
+    if parsed.scheme != "https" or not host:
         raise ValueError("The update manifest contains an invalid download URL.")
+    allowed = host in _ALLOWED_UPDATE_HOSTS or host.endswith(".githubusercontent.com")
+    if not allowed:
+        raise ValueError("The update manifest points to an untrusted download host.")
     return url
 
 

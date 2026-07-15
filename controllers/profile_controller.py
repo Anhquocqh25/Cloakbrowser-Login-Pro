@@ -7,7 +7,8 @@ import uuid
 import json
 import csv
 from dataclasses import asdict, replace
-from datetime import datetime, timedelta
+from datetime import timedelta
+from utils.timeutil import parse_iso_datetime, utc_iso, utc_now
 from functools import partial
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from storage.config_store import ConfigStore
 from utils.bookmark_config import write_bookmark_config
 from utils.extension_downloader import download_and_install_extension
 from utils.paths import profile_user_data_dir
-from utils.proxy_parser import normalize_proxy
+from utils.proxy_parser import normalize_proxy, parse_proxy
 from utils.proxy_checker import ProxyCheckResult, check_proxy as perform_proxy_check
 from utils.startup_url import normalize_startup_url
 from utils.geo_options import country_to_locale
@@ -132,19 +133,26 @@ class ProfileHealthWorker(QObject):
                 "message": f"{result.exit_ip} · {result.latency_ms} ms" if result.alive else result.error,
             }
             details["ip"] = {"status": "pass" if result.alive else "fail", "message": result.exit_ip or "Unavailable"}
-            details["webrtc"] = {"status": "pass", "message": "Proxy-only WebRTC policy enabled"}
-            details["dns"] = {"status": "pass", "message": "DNS traffic routed through proxy bridge"}
+            # Configured in launcher policy only — not verified inside a live browser page.
+            details["webrtc"] = {
+                "status": "configured",
+                "message": "Proxy WebRTC policy is set at launch; not verified in-browser",
+            }
+            details["dns"] = {
+                "status": "configured",
+                "message": "Traffic uses local proxy bridge; DNS leak not independently verified",
+            }
         else:
             details["proxy"] = {"status": "warning", "message": "Direct connection"}
             details["ip"] = {"status": "warning", "message": "Machine public IP will be used"}
-            details["webrtc"] = {"status": "warning", "message": "No proxy isolation required"}
+            details["webrtc"] = {"status": "warning", "message": "No proxy isolation configured"}
             details["dns"] = {"status": "warning", "message": "System DNS will be used"}
         details["timezone"] = {
             "status": "pass" if profile.auto_geoip and profile.proxy else "warning",
             "message": "Matched to proxy at launch" if profile.auto_geoip and profile.proxy else f"Manual: {profile.timezone}",
         }
         if profile.browser_engine == "cloak":
-            fingerprint_ok = bool(profile.fingerprint_seed)
+            fingerprint_ok = profile.fingerprint_seed is not None and 100000 <= int(profile.fingerprint_seed) <= 999999999
             details["fingerprint"] = {
                 "status": "pass" if fingerprint_ok else "fail",
                 "message": f"Cloak seed {profile.fingerprint_seed}" if fingerprint_ok else "Fingerprint seed missing",
@@ -152,11 +160,20 @@ class ProfileHealthWorker(QObject):
         else:
             details["fingerprint"] = {"status": "warning", "message": "Native Chrome uses its natural fingerprint"}
         statuses = [item["status"] for item in details.values()]
-        status = "fail" if "fail" in statuses else ("warning" if "warning" in statuses else "pass")
-        passed = sum(1 for item in statuses if item == "pass")
+        if "fail" in statuses:
+            status = "fail"
+        elif "warning" in statuses or "configured" in statuses:
+            status = "warning"
+        else:
+            status = "pass"
+        verified = sum(1 for item in statuses if item == "pass")
+        configured_only = sum(1 for item in statuses if item == "configured")
+        summary = f"{verified}/{len(statuses)} checks verified"
+        if configured_only:
+            summary += f", {configured_only} configured only (not verified)"
         payload = {
             "status": status,
-            "summary": f"{passed}/{len(statuses)} checks passed",
+            "summary": summary,
             "details": details,
             "timestamp": Profile.now_timestamp(),
         }
@@ -506,7 +523,8 @@ class ProfileController(QObject):
             if updated:
                 self.load_profiles()
         self.load_proxies()
-        self._log("proxy.updated" if existing else "proxy.created", details=f"{record.name} · {record.url}")
+        masked = parse_proxy(record.url).masked if parse_proxy(record.url) else record.name
+        self._log("proxy.updated" if existing else "proxy.created", details=f"{record.name} · {masked}")
         return record
 
     def delete_proxy(self, proxy_id: str) -> None:
@@ -554,7 +572,7 @@ class ProfileController(QObject):
     def run_proxy_pool_cycle(self) -> None:
         if not self.config_store.proxy_pool_enabled():
             return
-        cutoff = (datetime.utcnow() - timedelta(minutes=self.config_store.proxy_pool_interval_minutes())).isoformat(timespec="seconds")
+        cutoff = (utc_now() - timedelta(minutes=self.config_store.proxy_pool_interval_minutes())).isoformat(timespec="seconds")
         due = [
             item for item in self.proxy_repository.due_for_check(cutoff)
             if f"proxy:{item.id}" not in self.proxy_check_threads
@@ -568,7 +586,7 @@ class ProfileController(QObject):
             self.check_proxy(record.id)
 
     def best_proxy(self, country_code: str = "") -> ProxyRecord | None:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = utc_iso()
         usage: dict[str, int] = {}
         for profile in self.repository.list_profiles():
             if profile.proxy:
@@ -1063,12 +1081,11 @@ class ProfileController(QObject):
         return len(profiles)
 
     def purge_expired_profiles(self) -> int:
-        cutoff = datetime.utcnow() - timedelta(days=self.config_store.trash_retention_days())
+        cutoff = utc_now() - timedelta(days=self.config_store.trash_retention_days())
         expired: list[Profile] = []
         for profile in self.repository.list_deleted_profiles():
-            try:
-                deleted_at = datetime.fromisoformat(profile.deleted_at)
-            except (TypeError, ValueError):
+            deleted_at = parse_iso_datetime(profile.deleted_at)
+            if deleted_at is None:
                 continue
             if deleted_at <= cutoff:
                 expired.append(profile)
@@ -1258,11 +1275,10 @@ class ProfileController(QObject):
         if not self.config_store.automatic_backup_enabled() or "backup" in self.maintenance_threads or self.worker_threads:
             return
         last = self.config_store.last_backup_at()
-        try:
-            last_time = datetime.fromisoformat(last)
-        except (TypeError, ValueError):
-            last_time = datetime.min
-        if datetime.utcnow() - last_time >= timedelta(days=self.config_store.backup_interval_days()):
+        last_time = parse_iso_datetime(last)
+        if last_time is None:
+            last_time = utc_now().replace(year=1970)
+        if utc_now() - last_time >= timedelta(days=self.config_store.backup_interval_days()):
             self.create_backup(automatic=True)
 
     def _handle_maintenance_finished(self, key: str, result: object) -> None:

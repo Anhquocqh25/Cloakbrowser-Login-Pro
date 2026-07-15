@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from database.db import get_connection
 from models.proxy import ProxyRecord
+from utils.secret_store import encrypt_proxy_field
+from utils.timeutil import parse_iso_datetime, utc_iso, utc_now
 
 
 class ProxyRepository:
@@ -48,7 +50,8 @@ class ProxyRepository:
                    quality_score=excluded.quality_score,
                    cooldown_until=excluded.cooldown_until""",
                 (
-                    record.id, record.name, record.url, record.location, record.notes,
+                    record.id, record.name, encrypt_proxy_field(record.url) or record.url,
+                    record.location, record.notes,
                     record.created_at, record.status, record.latency_ms, record.exit_ip,
                     record.last_checked_at, record.check_error,
                     record.country_code, record.timezone, int(record.enabled), record.success_count,
@@ -85,22 +88,13 @@ class ProxyRepository:
         checked_at: str = "", error: str = "", location: str = "",
         country_code: str = "", timezone: str = "",
     ) -> None:
+        # Match in Python because DPAPI ciphertexts are not stable for SQL equality.
         current = next((item for item in self.list_all() if item.url == url), None)
-        success, failure, consecutive, enabled, score, cooldown = self._pool_result(current, status, latency_ms, checked_at)
-        with get_connection() as connection:
-            connection.execute(
-                """UPDATE proxies SET status=?, latency_ms=?, exit_ip=?,
-                   last_checked_at=?, check_error=?,
-                   location=CASE WHEN ? != '' THEN ? ELSE location END,
-                   country_code=CASE WHEN ? != '' THEN ? ELSE country_code END,
-                   geo_timezone=CASE WHEN ? != '' THEN ? ELSE geo_timezone END,
-                   enabled=?, success_count=?, failure_count=?, consecutive_failures=?,
-                   quality_score=?, cooldown_until=? WHERE url=?""",
-                (status, latency_ms, exit_ip, checked_at, error, location, location,
-                 country_code, country_code, timezone, timezone, int(enabled), success, failure,
-                 consecutive, score, cooldown, url),
-            )
-            connection.commit()
+        if current is None:
+            return
+        self.update_check_result(
+            current.id, status, latency_ms, exit_ip, checked_at, error, location, country_code, timezone
+        )
 
     @staticmethod
     def _pool_result(current: ProxyRecord | None, status: str, latency_ms: int, checked_at: str) -> tuple[int, int, int, bool, int, str]:
@@ -112,12 +106,16 @@ class ProxyRepository:
         if status not in {"live", "dead"}:
             return success, failure, consecutive, enabled, current.quality_score if current else 0, cooldown
         if status == "live":
-            success += 1; consecutive = 0; enabled = True; cooldown = ""
+            success += 1
+            consecutive = 0
+            enabled = True
+            cooldown = ""
         elif status == "dead":
-            failure += 1; consecutive += 1
+            failure += 1
+            consecutive += 1
             if consecutive >= 3:
                 enabled = False
-                base = datetime.fromisoformat(checked_at) if checked_at else datetime.utcnow()
+                base = parse_iso_datetime(checked_at) or utc_now()
                 cooldown = (base + timedelta(minutes=30)).isoformat(timespec="seconds")
         attempts = success + failure
         reliability = success / attempts if attempts else 0.0
@@ -134,7 +132,7 @@ class ProxyRepository:
             connection.commit()
 
     def best_available(self, country_code: str = "") -> ProxyRecord | None:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = utc_iso()
         records = [
             item for item in self.list_all()
             if item.enabled and item.status == "live"
@@ -144,7 +142,7 @@ class ProxyRepository:
         return max(records, key=lambda item: (item.quality_score, -item.latency_ms), default=None)
 
     def due_for_check(self, cutoff: str) -> list[ProxyRecord]:
-        now = datetime.utcnow().isoformat(timespec="seconds")
+        now = utc_iso()
         return [
             item for item in self.list_all()
             if (item.enabled or not item.cooldown_until or item.cooldown_until <= now)

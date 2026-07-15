@@ -33,10 +33,17 @@ class ProxyRecord:
 
     @classmethod
     def from_row(cls, row: Any) -> "ProxyRecord":
+        from utils.secret_store import decrypt_proxy_field
+
         stored_location = row["location"] or ""
         stored_code = row["country_code"] or country_code_from_flag_text(stored_location)
+        url = row["url"]
+        try:
+            url = decrypt_proxy_field(url) or url
+        except OSError:
+            pass
         return cls(
-            id=row["id"], name=row["name"], url=row["url"],
+            id=row["id"], name=row["name"], url=url,
             location=strip_flag_prefix(stored_location), notes=row["notes"], created_at=row["created_at"],
             status=row["status"], latency_ms=int(row["latency_ms"] or 0),
             exit_ip=row["exit_ip"], last_checked_at=row["last_checked_at"],

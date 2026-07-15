@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime
 import json
 from pathlib import Path
 import shutil
@@ -16,6 +15,7 @@ from config import (
 from database.db import get_connection
 from models.profile import Profile
 from utils.paths import profile_user_data_dir
+from utils.timeutil import utc_iso, utc_now
 
 
 class BackupError(RuntimeError):
@@ -33,7 +33,7 @@ def _safe_extract(archive: zipfile.ZipFile, destination: Path) -> None:
 
 def create_full_backup(destination: str | Path | None = None) -> Path:
     BACKUP_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    timestamp = utc_now().strftime("%Y%m%d-%H%M%S")
     target = Path(destination) if destination else BACKUP_STORAGE_DIR / f"cloak-backup-{timestamp}.zip"
     if target.suffix.lower() != ".zip":
         target = target.with_suffix(".zip")
@@ -51,7 +51,7 @@ def create_full_backup(destination: str | Path | None = None) -> Path:
         manifest = {
             "application": APP_NAME,
             "version": APP_VERSION,
-            "created_at": datetime.utcnow().isoformat(timespec="seconds"),
+            "created_at": utc_iso(),
             "format": 1,
         }
         (temp / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")

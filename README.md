@@ -4,19 +4,18 @@
 
 ## Tải bản chạy sẵn
 
-Phiên bản source mới nhất: **0.1.8** (đã merge `main`).
+Phiên bản mới nhất: **0.1.8**
 
-> **0.1.8** tập trung bảo mật/ổn định: mã hóa proxy (DPAPI), health check không báo pass giả, SQLite WAL, UTC thống nhất, update host allowlist. **Không đổi lõi fingerprint / Cloak launch.**  
-> Bản cài sẵn (EXE/ZIP) **0.1.8** sẽ có sau khi build release; trong lúc đó dùng source 0.1.8 hoặc installer **0.1.7** bên dưới.
+> **0.1.8**: mã hóa proxy (DPAPI), health WebRTC/DNS không báo pass giả, SQLite WAL, UTC thống nhất, update host allowlist. **Không đổi lõi fingerprint / Cloak launch.**
 
-Bạn có thể chọn một trong hai bản cài sẵn hiện có:
+Bạn có thể chọn một trong hai bản:
 
 ### Bản cài đặt trực tiếp
 
-[Download Installer EXE 0.1.7](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.7/CloakBrowser-Login-Pro-Setup-0.1.7-Windows.exe)
+[Download Installer EXE 0.1.8](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.8/CloakBrowser-Login-Pro-Setup-0.1.8-Windows.exe)
 
 1. Tải file EXE ở link trên.
-2. Mở file `CloakBrowser-Login-Pro-Setup-0.1.7-Windows.exe`.
+2. Mở file `CloakBrowser-Login-Pro-Setup-0.1.8-Windows.exe`.
 3. Bấm Next/Install để cài app.
 4. Sau khi cài, mở app từ Start Menu hoặc shortcut Desktop nếu đã chọn.
 
@@ -24,7 +23,7 @@ Installer cài theo user hiện tại, không cần quyền Administrator.
 
 ### Bản portable
 
-[Download Portable ZIP 0.1.7](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.7/CloakBrowser-Login-0.1.7-Windows.zip)
+[Download Portable ZIP 0.1.8](https://github.com/Anhquocqh25/Cloakbrowser-Login-Pro/releases/download/v0.1.8/CloakBrowser-Login-0.1.8-Windows.zip)
 
 1. Tải file ZIP.
 2. Giải nén ra một thư mục bất kỳ.
